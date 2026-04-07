@@ -7,13 +7,14 @@ import configparser
 
 SYSTEM_PATH = "/usr/share/icons"
 USER_PATH = os.path.expanduser("~/.local/share/icons")
-CATEGORIES = ["apps", "places", "devices", "actions", "status"]
+CATEGORIES = ["apps", "places", "devices", "actions", "status", "mimetypes"]
 CONTEXTS = {
     "apps": "Applications",
     "places": "Places",
     "devices": "Devices",
     "actions": "Actions",
-    "status": "Status"
+    "status": "Status",
+    "mimetypes": "Mimetypes"
 }
 
 
@@ -34,8 +35,17 @@ def list_themes():
 def get_theme_dirs_with_inheritance(theme_name):
     dirs = []
     visited = set()
-    current = theme_name
-    while current and current not in visited:
+    to_process = [theme_name]
+    
+    # Include temp directory if it exists
+    temp_path = Path.home() / ".xfce-theme-studio" / "theme" / f"{theme_name}.temp"
+    if temp_path.exists():
+        dirs.append(str(temp_path))
+    
+    while to_process:
+        current = to_process.pop(0)
+        if current in visited:
+            continue
         visited.add(current)
         dirs.append(os.path.join(USER_PATH, current))
         dirs.append(os.path.join(SYSTEM_PATH, current))
@@ -50,11 +60,7 @@ def get_theme_dirs_with_inheritance(theme_name):
             config.read(index_path)
             if 'Icon Theme' in config and 'Inherits' in config['Icon Theme']:
                 inherits = [i.strip() for i in config['Icon Theme']['Inherits'].split(',')]
-                current = inherits[0] if inherits else None
-            else:
-                current = None
-        else:
-            current = None
+                to_process.extend(inherits)
     return dirs
 
 ############################################ create theme ###############################################
@@ -180,6 +186,7 @@ def create_theme_popup(parent, theme_listbox):
             # en-tête
             f.write("[Icon Theme]\n")
             f.write(f"Name={name}\n")
+            f.write(f"Comment=Theme based on {base}\n")
             f.write(f"Inherits={','.join(final_inherits)}\n")
             f.write(f"Directories={','.join(CATEGORIES)}\n\n")
     
@@ -383,6 +390,7 @@ def on_theme_select(event, theme_listbox, tabs, entry_name):
 
 import shutil
 from pathlib import Path
+from icon_modify import changeFalse
 
 def save_theme(theme_name):
     temp_path = Path(f"~/.xfce-theme-studio/theme/{theme_name}.temp").expanduser()
@@ -401,12 +409,50 @@ def save_theme(theme_name):
     # suppression du temp
     shutil.rmtree(temp_path)
 
+    # Rafraîchir le cache des icônes pour que Thunar affiche les nouvelles icônes
+    import subprocess
+    
+    print(f"Updating icon cache for theme: {theme_name} at {final_path}")
+    if shutil.which('gtk-update-icon-cache'):
+        try:
+            # Rafraîchir le cache du thème spécifique
+            result = subprocess.run(['gtk-update-icon-cache', '-f', str(final_path)], 
+                                  check=True, capture_output=True, text=True)
+            print(f"Icon cache updated successfully for theme {theme_name}")
+            print(f"gtk-update-icon-cache output: {result.stdout}")
+                    
+            # Forcer le rechargement du thème dans XFCE
+            try:
+                result3 = subprocess.run(['xfconf-query', '-c', 'xsettings', '-p', '/Net/IconThemeName', '-s', theme_name], 
+                                       check=True, capture_output=True, text=True)
+                print(f"XFCE icon theme reloaded: {theme_name}")
+                print(f"xfconf-query output: {result3.stdout}")
+            except subprocess.CalledProcessError as e3:
+                print(f"Failed to reload XFCE icon theme with xfconf-query: {e3}")
+                print(f"xfconf-query error: {e3.stderr}")
+                # Essayer avec gsettings comme alternative
+                try:
+                    result4 = subprocess.run(['gsettings', 'set', 'org.gnome.desktop.interface', 'icon-theme', theme_name], 
+                                           check=True, capture_output=True, text=True)
+                    print(f"GNOME icon theme reloaded with gsettings: {theme_name}")
+                except subprocess.CalledProcessError as e4:
+                    print(f"Failed to reload icon theme with gsettings: {e4}")
+                    print("Icon theme may need manual reload or system restart")
+                    
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to update icon cache: {e}")
+            print(f"Error output: {e.stderr}")
+    else:
+        print("gtk-update-icon-cache not found, icon cache not updated")
+    changeFalse()
+
 
 def reset_theme(theme_name):
     temp_path = Path(f"~/.xfce-theme-studio/theme/{theme_name}.temp").expanduser()
 
     if temp_path.exists():
         shutil.rmtree(temp_path)
+    changeFalse()
 
 
 

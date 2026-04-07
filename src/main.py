@@ -361,7 +361,46 @@ mime_list.pack(fill=tk.BOTH, expand=True)
 # Populate the mimetype list
 refresh_list(mime_list, mime_search_var)
 
+current_mime_icon_path = ""
+current_mime_name = ""
+
+
+def find_mimetype_icon(theme_dir, names):
+    matched = []
+    for root, dirs, files in os.walk(theme_dir):
+        if "/mimetypes" not in root and not root.endswith("mimetypes"):
+            continue
+        for file in files:
+            name, ext = os.path.splitext(file)
+            if ext.lower() in ['.png', '.svg', '.xpm'] and name in names:
+                matched.append(os.path.join(root, file))
+
+    if not matched:
+        return None
+
+    best = None
+    best_size = -1
+    svg = None
+    for path in matched:
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".svg":
+            svg = path
+            continue
+
+        size = 0
+        for part in path.split(os.sep):
+            if "x" in part and part.split("x")[0].isdigit():
+                size = int(part.split("x")[0])
+                break
+        if size > best_size:
+            best_size = size
+            best = path
+
+    return best if best else svg
+
+
 def on_mime_select(event):
+    global current_mime_icon_path, current_mime_name, theme_name
     if not mime_list.curselection():
         return
     idx = mime_list.curselection()[0]
@@ -374,19 +413,23 @@ def on_mime_select(event):
     actual_mime = mime_types[0] if mime_types else ""
     print(f"DEBUG: Selected: {mime}, texte: {texte}, actual_mime: {actual_mime}")
     
+    current_mime_icon_path = ""
+    current_mime_name = ""
+    
     # Find and display the MIME icon
     if actual_mime:
-        # Try specific name first
         mime_icon_name = actual_mime.replace('/', '-')
-        # Then try generic names
-        main_type = actual_mime.split('/')[0]
-        generic_names = [mime_icon_name, f"{main_type}-x-generic", f"{main_type}-x-generic-symbolic"]
-        print(f"DEBUG: Trying names: {generic_names}")
+        current_mime_name = mime_icon_name
+        main_type, sub_type = actual_mime.split('/', 1)
+        # First, try to find the specific MIME icon
+        try_names = [mime_icon_name]
+        print(f"DEBUG: Trying specific names: {try_names}")
+        
+        system_themes, custom_themes = list_themes()
         if theme_name:
             theme_dirs = get_theme_dirs_with_inheritance(theme_name)
         else:
             # Use default theme or first available
-            system_themes, custom_themes = list_themes()
             if custom_themes:
                 theme_name_default = custom_themes[0]
             elif system_themes:
@@ -395,27 +438,69 @@ def on_mime_select(event):
                 theme_name_default = None
             if theme_name_default:
                 theme_dirs = get_theme_dirs_with_inheritance(theme_name_default)
-        
+
+        print(f"DEBUG: theme_dirs: {theme_dirs}")
+
+        # Search for the exact MIME icon in theme precedence order
+        icon_path = None
         for theme_dir in theme_dirs:
-            # Search in all */mimetypes subdirs
-            for root, dirs, files in os.walk(theme_dir):
-                if os.path.basename(root) == "mimetypes":
-                    for file in files:
-                        name, ext = os.path.splitext(file)
-                        for try_name in generic_names:
-                            if name == try_name and ext.lower() in ['.png', '.svg', '.xpm']:
-                                icon_path = os.path.join(root, file)
-                                print(f"DEBUG: Found icon: {icon_path}")
-                                img = load_image(icon_path, (64, 64))
-                                print(f"DEBUG: img: {img}")
-                                if img:
-                                    print("DEBUG: Setting image")
-                                    mime_image_placeholder.config(image=img, text="")
-                                    mime_image_placeholder.image = img  # Keep reference
-                                    return
+            print(f"DEBUG: Searching exact icon in theme_dir: {theme_dir}")
+            found = find_mimetype_icon(theme_dir, try_names)
+            if found:
+                icon_path = found
+                print(f"DEBUG: Found exact icon in theme_dir: {theme_dir} -> {icon_path}")
+                break
+
+        if icon_path:
+            img = load_image(icon_path, (64, 64))
+            if img:
+                print(f"DEBUG: Best specific icon: {icon_path}")
+                mime_image_placeholder.config(image=img, text="")
+                mime_image_placeholder.image = img  # Keep reference
+                current_mime_icon_path = icon_path
+                return
+        
+        # If no specific icon found, try generic names
+        generic_names = [f"{main_type}-x-{sub_type}", f"{main_type}-x-generic", f"{main_type}-x-generic-symbolic"]
+        # Remove duplicates
+        generic_names = list(dict.fromkeys(generic_names))
+        print(f"DEBUG: Trying generic names: {generic_names}")
+        
+        icon_path = None
+        # Chercher d'abord dans le thème actuel et son héritage
+        for theme_dir in theme_dirs:
+            found = find_mimetype_icon(theme_dir, generic_names)
+            if found:
+                icon_path = found
+                print(f"DEBUG: Found generic icon in current theme chain -> {icon_path}")
+                break
+
+        # Si pas trouvé, chercher ensuite dans tous les thèmes installés
+        if not icon_path:
+            for candidate_theme in custom_themes + system_themes:
+                theme_group = get_theme_dirs_with_inheritance(candidate_theme)
+                for theme_dir in theme_group:
+                    found = find_mimetype_icon(theme_dir, generic_names)
+                    if found:
+                        icon_path = found
+                        print(f"DEBUG: Found generic icon in theme {candidate_theme} -> {icon_path}")
+                        break
+                if icon_path:
+                    break
+
+        if icon_path:
+            print(f"DEBUG: Best generic icon: {icon_path}")
+            img = load_image(icon_path, (64, 64))
+            if img:
+                mime_image_placeholder.config(image=img, text="")
+                mime_image_placeholder.image = img
+                current_mime_icon_path = icon_path
+                return
     # If not found, show placeholder
     print("DEBUG: No icon found")
     mime_image_placeholder.config(image="", text="[Icon extension]")
+    if current_mime_name:
+        current_mime_icon_path = f"/fake/{current_mime_name}.png"
 
 mime_right = tk.LabelFrame(mime_frame, text="Extension details", padx=6, pady=6)
 mime_right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -426,7 +511,20 @@ mime_info_label.pack()
 mime_image_placeholder = tk.Label(mime_right, text="[Icon extension]", bg="#ddd", relief=tk.SUNKEN)
 mime_image_placeholder.pack(pady=10)
 
-btn_change_mime_icon = tk.Button(mime_right, text="Change", command=action_inactive)
+def on_change_mime_click():
+    global current_mime_icon_path
+    zenity_cmd = ['zenity', '--file-selection', '--title=Choose an icon', '--file-filter=Images | *.png *.svg *.xpm']
+    result = subprocess.run(zenity_cmd, capture_output=True, text=True)
+    chemin_selectionne = result.stdout.strip()
+
+    if chemin_selectionne and current_mime_name:
+        fake_original = f"/fake/{current_mime_name}.png"
+        dest_path = apply_new_icon(theme_name, "mimetypes", chemin_selectionne, fake_original)
+        if dest_path:
+            refresh_icone_widget(mime_image_placeholder, dest_path, load_image)
+            current_mime_icon_path = str(dest_path)
+
+btn_change_mime_icon = tk.Button(mime_right, text="Change", command=on_change_mime_click)
 btn_change_mime_icon.pack()
 
 mime_list.bind('<ButtonRelease-1>', on_mime_select)
@@ -466,6 +564,7 @@ def ask_unsaved_changes(root):
 
     def reset():
         result["choice"] = "reset"
+        changeFalse()
         popup.destroy()
 
     def cancel():
@@ -498,7 +597,11 @@ def on_theme_change(event):
             reset_theme(theme_name)
     # continuer normalement
     changeFalse()
-    theme_name = theme_listbox.get(theme_listbox.curselection())
+    selection = theme_listbox.curselection()
+    if not selection:
+        print("no selection, skipping")
+        return
+    theme_name = theme_listbox.get(selection[0])
     print(theme_name)
     on_theme_select(event, theme_listbox, tabs, entry_name)
 
