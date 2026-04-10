@@ -7,12 +7,14 @@ from io import BytesIO
 from PIL import Image, ImageTk
 import subprocess
 import os
+import shutil
+import tarfile
+import webbrowser
 
 from icon_engine import tab_click, display_icon
-from theme_manage import create_theme_popup, delete_theme_popup, refresh_theme_listbox, on_theme_select, save_theme, reset_theme, USER_PATH, SYSTEM_PATH, list_themes, get_theme_dirs_with_inheritance
+from theme_manage import create_theme_popup, delete_theme_popup, refresh_theme_listbox, on_theme_select, save_theme, reset_theme, USER_PATH, SYSTEM_PATH, list_themes, get_theme_dirs_with_inheritance, rename_theme, find_theme_path
 from icon_modify import apply_new_icon, refresh_icone_widget, refresh_icon_cell, has_unsaved_changes, changeFalse
 from mimetype_tab import refresh_list, items, displayed
-
 
 # Fenêtre principale
 root = tk.Tk()
@@ -25,6 +27,197 @@ root.resizable(True, True)
 def action_inactive():
     messagebox.showinfo("Info", "Fonctionnalité non implémentée (interface prototype)")
 
+def show_help():
+    win = tk.Toplevel()
+    win.title("Help")
+    win.geometry("400x270")
+    win.resizable(False, False)
+
+    # Texte
+    tk.Label(win, text="Need help or found a bug?", font=("Arial", 11, "bold")).pack(pady=(10, 10))
+
+    # Fonction pour ouvrir les liens
+    def open_link(url):
+        webbrowser.open(url)
+
+    # GitHub
+    github = "https://github.com/SamouraiT3/Xfce-Theme-Studio"
+    tk.Label(win, text="GitHub:", anchor="w").pack(fill="x", padx=10)
+    e1 = tk.Entry(win)
+    e1.insert(0, github)
+    e1.config(state="readonly")
+    e1.pack(fill="x", padx=10)
+    tk.Button(win, text="Open", command=lambda: open_link(github)).pack(pady=2)
+
+    # Issues
+    issues = "https://github.com/SamouraiT3/Xfce-Theme-Studio/issues"
+    tk.Label(win, text="Issues:", anchor="w").pack(fill="x", padx=10)
+    e2 = tk.Entry(win)
+    e2.insert(0, issues)
+    e2.config(state="readonly")
+    e2.pack(fill="x", padx=10)
+    tk.Button(win, text="Open", command=lambda: open_link(issues)).pack(pady=2)
+
+    # Email
+    email = "samourai.t3@gmail.com"
+    tk.Label(win, text="Contact:", anchor="w").pack(fill="x", padx=10)
+    e3 = tk.Entry(win)
+    e3.insert(0, email)
+    e3.config(state="readonly")
+    e3.pack(fill="x", padx=10)
+
+def import_theme():
+    zenity_cmd = ['zenity', '--file-selection', '--title=Import Theme', '--file-filter=Themes | *.tar.gz *.zip']
+    env = os.environ.copy()
+    env['DISPLAY'] = os.environ.get('DISPLAY', ':0')
+    
+    try:
+        process = subprocess.Popen(zenity_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        stdout, stderr = process.communicate(timeout=30)
+        selected_path = stdout.strip()
+    except subprocess.TimeoutExpired:
+        process.kill()
+        messagebox.showerror("Error", "Import cancelled or timed out")
+        return
+    
+    if not selected_path:
+        return
+
+    # Determine if it's a file or directory
+    if os.path.isfile(selected_path):
+        # Handle archive import
+        if selected_path.lower().endswith(('.tar.gz', '.tgz', '.zip')):
+            # Extract archive to temp directory first
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                extract_dir = os.path.join(temp_dir, "extracted")
+                os.makedirs(extract_dir)
+                
+                try:
+                    if selected_path.lower().endswith('.zip'):
+                        import zipfile
+                        with zipfile.ZipFile(selected_path, 'r') as zip_ref:
+                            zip_ref.extractall(extract_dir)
+                    else:
+                        with tarfile.open(selected_path, 'r:gz') as tar_ref:
+                            tar_ref.extractall(extract_dir)
+                    
+                    # Find the theme directory (should be the only directory in extract_dir)
+                    extracted_items = os.listdir(extract_dir)
+                    if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_dir, extracted_items[0])):
+                        theme_source_dir = os.path.join(extract_dir, extracted_items[0])
+                        theme_name = extracted_items[0]
+                    else:
+                        # Multiple items or files, use the archive name without extension
+                        theme_name = os.path.splitext(os.path.splitext(os.path.basename(selected_path))[0])[0]
+                        theme_source_dir = extract_dir
+                    
+                    # Copy to user themes
+                    system, custom = list_themes()
+                    dest = os.path.join(USER_PATH, theme_name)
+                    
+                    if theme_name in system or theme_name in custom:
+                        overwrite = messagebox.askyesno(
+                            "Overwrite theme?",
+                            f"The theme '{theme_name}' already exists. Overwrite?"
+                        )
+                        if not overwrite:
+                            return
+                        shutil.rmtree(dest, ignore_errors=True)
+                    
+                    shutil.copytree(theme_source_dir, dest, dirs_exist_ok=True)
+                    messagebox.showinfo("Success", f"Theme '{theme_name}' imported from archive")
+                    refresh_theme_listbox(theme_listbox)
+                    
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to extract archive: {e}")
+        else:
+            messagebox.showerror("Error", "Unsupported file format. Please select a .tar.gz, .zip file or a theme directory.")
+    else:
+        # Handle directory import (existing code)
+        theme_name = os.path.basename(os.path.normpath(selected_path))
+        system, custom = list_themes()
+        dest = os.path.join(USER_PATH, theme_name)
+
+        if theme_name in system or theme_name in custom:
+            overwrite = messagebox.askyesno(
+                "Overwrite theme?",
+                f"The theme '{theme_name}' already exists. Overwrite?"
+            )
+            if not overwrite:
+                return
+            shutil.rmtree(dest, ignore_errors=True)
+
+        try:
+            shutil.copytree(selected_path, dest, dirs_exist_ok=True)
+            messagebox.showinfo("Success", f"Theme '{theme_name}' imported")
+            refresh_theme_listbox(theme_listbox)
+        except Exception as e:
+            messagebox.showerror("Error", f"Import failed: {e}")
+
+def export_theme():
+    if not theme_name:
+        messagebox.showerror("Error", "Select a theme first")
+        return
+
+    source_dir = find_theme_path(theme_name)
+    if not source_dir or not os.path.isdir(source_dir):
+        messagebox.showerror("Error", "Theme folder not found")
+        return
+
+    zenity_cmd = ['zenity', '--file-selection', '--save', '--title=Export Theme', '--filename=' + f"{theme_name}.tar.gz"]
+    result = subprocess.run(zenity_cmd, capture_output=True, text=True)
+    target_file = result.stdout.strip()
+    
+    if not target_file:
+        return
+
+    # Add .tar.gz extension if not present
+    if not target_file.lower().endswith(('.tar.gz', '.tgz')):
+        target_file += '.tar.gz'
+
+    try:
+        with tarfile.open(target_file, "w:gz") as tar:
+            tar.add(source_dir, arcname=os.path.basename(source_dir))
+        messagebox.showinfo("Success", f"Theme exported to {target_file}")
+    except Exception as e:
+        messagebox.showerror("Error", f"Export failed: {e}")
+
+def rename_theme_entry(event=None):
+    global theme_name
+    if not theme_name:
+        return
+
+    new_name = entry_name.get().strip()
+    if not new_name:
+        messagebox.showerror("Error", "Theme name cannot be empty")
+        entry_name.delete(0, tk.END)
+        entry_name.insert(0, theme_name)
+        return
+
+    if new_name == theme_name:
+        return
+
+    success, error = rename_theme(theme_name, new_name)
+    if not success:
+        messagebox.showerror("Error", error)
+        entry_name.delete(0, tk.END)
+        entry_name.insert(0, theme_name)
+        return
+
+    messagebox.showinfo("Success", f"Theme renamed to {new_name}")
+    theme_name = new_name
+    refresh_theme_listbox(theme_listbox)
+
+    # Re-select renamed theme
+    for idx, item in enumerate(theme_listbox.get(0, tk.END)):
+        if item == theme_name:
+            theme_listbox.selection_clear(0, tk.END)
+            theme_listbox.selection_set(idx)
+            theme_listbox.activate(idx)
+            on_theme_select(None, theme_listbox, tabs, entry_name)
+            break
+
 # Aide au chargement des images avec ou sans Pillow
 def load_image(path, size=(64, 64)):
     p = Path(path)
@@ -36,6 +229,18 @@ def load_image(path, size=(64, 64)):
         if path.lower().endswith(".svg"):
             png_data = cairosvg.svg2png(url=str(p))
             img = Image.open(BytesIO(png_data))
+
+        # 🔹 XPM → conversion temporaire avec ImageMagick
+        elif path.lower().endswith(".xpm"):
+            import tempfile
+            import subprocess
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                subprocess.run(["convert", str(p), tmp_path], check=True, capture_output=True)
+                img = Image.open(tmp_path)
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
 
         # 🔹 PNG / autres
         else:
@@ -84,6 +289,10 @@ label_name = tk.Label(right_frame, text="Name :", font=("Arial", 12))
 label_name.pack(anchor=tk.W, pady=4)
 entry_name = tk.Entry(right_frame, font=("Arial", 12), width=50)
 entry_name.pack(anchor=tk.W, pady=4)
+entry_name.insert(0, "")
+entry_name.bind("<Return>", rename_theme_entry)
+help_label = tk.Label(right_frame, text="Appuie sur Entrée pour renommer le thème sélectionné.", font=("Arial", 9), fg="#555")
+help_label.pack(anchor=tk.W, pady=(0,6))
 
 # Onglets d'icônes par catégorie
 
@@ -535,11 +744,11 @@ mime_search_var.trace_add('write', lambda name, index, mode: refresh_list(mime_l
 bottom_bar = tk.Frame(root, bd=1, relief=tk.SUNKEN, padx=6, pady=6)
 bottom_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
-btn_import = tk.Button(bottom_bar, text="Import Theme", command=action_inactive)
+btn_import = tk.Button(bottom_bar, text="Import Theme", command=import_theme)
 btn_import.pack(side=tk.RIGHT, padx=4)
-btn_export = tk.Button(bottom_bar, text="Export Theme", command=action_inactive)
+btn_export = tk.Button(bottom_bar, text="Export Theme", command=export_theme)
 btn_export.pack(side=tk.RIGHT, padx=4)
-btn_help = tk.Button(bottom_bar, text="Help", command=action_inactive)
+btn_help = tk.Button(bottom_bar, text="Help", command=show_help)
 btn_help.pack(side=tk.RIGHT, padx=4)
 
 # popup de sauvegarde

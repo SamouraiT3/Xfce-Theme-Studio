@@ -3,6 +3,7 @@ from tkinter import messagebox
 import os
 import re
 import random
+import shutil
 import configparser
 
 SYSTEM_PATH = "/usr/share/icons"
@@ -176,26 +177,51 @@ def create_theme_popup(parent, theme_listbox):
         path = os.path.join(USER_PATH, name)
         os.makedirs(path, exist_ok=True)
 
-        inherits = read_inherits(base)
-        final_inherits = [base] + [i for i in inherits if i != base]
+        if base in custom:
+            # Duplicate the custom base theme so the new theme remains independent
+            base_path = os.path.join(USER_PATH, base)
+            shutil.copytree(base_path, path, dirs_exist_ok=True)
 
-        for cat in CATEGORIES:
-            os.makedirs(os.path.join(path, cat), exist_ok=True)
+            index_path = os.path.join(path, "index.theme")
+            if os.path.isfile(index_path):
+                with open(index_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
 
-        with open(os.path.join(path, "index.theme"), "w", encoding="utf-8") as f:
-            # en-tête
-            f.write("[Icon Theme]\n")
-            f.write(f"Name={name}\n")
-            f.write(f"Comment=Theme based on {base}\n")
-            f.write(f"Inherits={','.join(final_inherits)}\n")
-            f.write(f"Directories={','.join(CATEGORIES)}\n\n")
-    
-            # sections automatiques
+                with open(index_path, "w", encoding="utf-8") as f:
+                    for line in lines:
+                        if line.startswith("Name="):
+                            f.write(f"Name={name}\n")
+                        elif line.startswith("Comment="):
+                            f.write(f"Comment=Theme based on {base}\n")
+                        elif line.startswith("Inherits="):
+                            inherits = [i.strip() for i in line.split("=", 1)[1].split(",") if i.strip() and i.strip() != base]
+                            if inherits:
+                                f.write(f"Inherits={','.join(inherits)}\n")
+                            else:
+                                f.write("Inherits=\n")
+                        else:
+                            f.write(line)
+        else:
+            inherits = read_inherits(base)
+            final_inherits = [base] + [i for i in inherits if i != base]
+
             for cat in CATEGORIES:
-                f.write(f"[{cat}]\n")
-                f.write(f"Size=64\n")
-                f.write(f"Context={CONTEXTS[cat]}\n")
-                f.write("Type=Fixed\n\n")
+                os.makedirs(os.path.join(path, cat), exist_ok=True)
+
+            with open(os.path.join(path, "index.theme"), "w", encoding="utf-8") as f:
+                # en-tête
+                f.write("[Icon Theme]\n")
+                f.write(f"Name={name}\n")
+                f.write(f"Comment=Theme based on {base}\n")
+                f.write(f"Inherits={','.join(final_inherits)}\n")
+                f.write(f"Directories={','.join(CATEGORIES)}\n\n")
+    
+                # sections automatiques
+                for cat in CATEGORIES:
+                    f.write(f"[{cat}]\n")
+                    f.write(f"Size=64\n")
+                    f.write(f"Context={CONTEXTS[cat]}\n")
+                    f.write("Type=Fixed\n\n")
 
         messagebox.showinfo("Success", "Theme created")
         popup.destroy()
@@ -364,6 +390,48 @@ def get_theme_paths(theme_name):
     resolve(theme_name)
 
     return result
+
+
+def rename_theme(old_name, new_name):
+    if old_name == new_name:
+        return True, ""
+
+    if not re.match(r"^[^/\\\\]+$", new_name):
+        return False, "Invalid theme name"
+
+    system, custom = list_themes()
+    if new_name in system or new_name in custom:
+        return False, "A theme with that name already exists"
+
+    old_path = os.path.join(USER_PATH, old_name)
+    new_path = os.path.join(USER_PATH, new_name)
+    if not os.path.isdir(old_path):
+        return False, "Original theme not found"
+
+    try:
+        os.rename(old_path, new_path)
+
+        old_temp = Path.home() / ".xfce-theme-studio" / "theme" / f"{old_name}.temp"
+        new_temp = Path.home() / ".xfce-theme-studio" / "theme" / f"{new_name}.temp"
+        if old_temp.exists():
+            old_temp.rename(new_temp)
+
+        # Update index.theme by replacing only the Name line, preserving case
+        index_file = os.path.join(new_path, "index.theme")
+        if os.path.isfile(index_file):
+            with open(index_file, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            with open(index_file, "w", encoding="utf-8") as f:
+                for line in lines:
+                    if line.startswith("Name="):
+                        f.write(f"Name={new_name}\n")
+                    else:
+                        f.write(line)
+
+        return True, ""
+    except Exception as e:
+        return False, f"Failed to rename theme: {e}"
 
 
 def on_theme_select(event, theme_listbox, tabs, entry_name):
