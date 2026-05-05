@@ -1,10 +1,14 @@
-# Xfce Theme Studio
+<h1>
+  Xfce Theme Studio
+  <img src="assets/icon.png" width="48" style="vertical-align: middle;" />
+</h1>
 
-A simple graphical tool to create and customize icon themes for Xfce on Linux Mint.
+
+A simple graphical tool to create and customize icon themes for Xfce on Linux
 
 ## Description
 
-Xfce Theme Studio is a Python application using Tkinter that allows users to easily create and modify icon themes for the Xfce desktop environment. The intuitive interface facilitates icon management by categories (applications, places, devices, actions, status) and supports SVG and PNG formats.
+Xfce Theme Studio is a Python application using PyGObject that allows users to easily create and modify icon themes for the Xfce desktop environment. The intuitive interface facilitates icon management by categories (applications, places, devices, actions, status) and supports SVG and PNG formats.
 
 ## Main Features
 
@@ -40,14 +44,15 @@ The interface guides you through the different steps of creating and modifying t
 
 ## Screenshots
 
-![Main Interface](assets/screenshot1.png)
-![Icon Modification](assets/screenshot2.png)
-![Theme Management](assets/screenshot3.png)
+![Icon Modification](assets/screenshot1.png)
+![Mimetype Modification](assets/screenshot2.png)
+![Interface](assets/screenshot3.png)
+
 
 ## Dependencies
 
 - Python 3
-- Tkinter (included in Python)
+- Tkinter (included in Python) and PyGObject
 - Pillow (PIL)
 - CairoSVG
 
@@ -61,5 +66,5 @@ Developed by Samourai-T3
 
 ## Version
 
-Current version: beta1  
-Next version: v1.0 (in development)
+Current version: v1.0
+Next version: v2.0 (graphical interface change for PyGObject)

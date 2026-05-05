@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+from gi.repository import Gtk, GdkPixbuf
 
 # 🔹 1. Choisir meilleure icône
 def best_icon(file_list):
@@ -33,7 +35,7 @@ def scan_category(theme_dir, category):
 
     for root, dirs, files in os.walk(theme_dir):
         # IMPORTANT : vérifier si le chemin contient la catégorie
-        if category not in root.lower():
+        if category.lower() not in root.lower():
             continue
 
         for f in files:
@@ -68,44 +70,71 @@ def list_icon(category, theme_dirs):
     return list(final_icons.values())
 
 
-# 🔹 4. Affichage dans Tkinter
-import tkinter as tk
-
+# 🔹 4. Affichage dans GTK
 def display_icon(container, paths, load_image, on_click, grid_cols=1):
-    for child in container.winfo_children():
-        child.destroy()
+    # Clear existing children - Gtk.Grid uses foreach to iterate
+    def remove_child(child):
+        container.remove(child)
+    container.foreach(remove_child)
 
     photo_refs = []
     icon_items = []
 
     for idx, path in enumerate(paths):
-        r, c = divmod(idx, grid_cols)
+        row, col = divmod(idx, grid_cols)
 
-        cell = tk.Frame(container, width=80, height=90, bg= "#f0f0f0", bd=1, relief=tk.RIDGE)
-        cell.grid(row=r, column=c, padx=6, pady=6)
-        cell.pack_propagate(False)
+        # Create EventBox to capture click events
+        event_box = Gtk.EventBox()
+        event_box.set_margin_start(6)
+        event_box.set_margin_end(6)
+        event_box.set_margin_top(6)
+        event_box.set_margin_bottom(6)
+        event_box.set_visible(True)
+        
+        # Attach to grid
+        container.attach(event_box, col, row, 1, 1)
 
+        # Create Frame inside EventBox for visual styling
+        cell = Gtk.Frame()
+        cell.set_shadow_type(Gtk.ShadowType.IN)
+        event_box.add(cell)
+
+        # Create vertical box for content
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        vbox.set_margin_start(4)
+        vbox.set_margin_end(4)
+        vbox.set_margin_top(4)
+        vbox.set_margin_bottom(4)
+        cell.add(vbox)
+
+        # Load and display image
         img = load_image(path, (64, 64))
-
+        
         if img:
-            lbl = tk.Label(cell, image=img)
-            photo_refs.append(img)
+            # Scale to 64x64
+            img = img.scale_simple(64, 64, GdkPixbuf.InterpType.BILINEAR)
+            img_widget = Gtk.Image.new_from_pixbuf(img)
         else:
-            lbl = tk.Label(cell, text="X")
+            img_widget = Gtk.Label(label="X")
+        
+        vbox.pack_start(img_widget, False, False, 0)
 
-        lbl.pack(expand=True)
+        # Add click handler - connect to event_box
+        def make_callback(p=path, c=event_box, i=img):
+            def callback(widget, event):
+                on_click(p, c, i)
+            return callback
+        
+        handler_id = event_box.connect("button-press-event", make_callback())
 
-        lbl.bind(
-            "<Button-1>",
-            lambda e, p=path, c=cell, i=img: on_click(p, c, i)
-        )
-
-        # 🔥 IMPORTANT
+        # Store reference - use event_box as cell reference
         icon_items.append({
             "path": path,
-            "cell": cell
+            "cell": event_box,
+            "handler_id": handler_id
         })
 
+    container.show_all()
     return icon_items, photo_refs
 
 

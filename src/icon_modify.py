@@ -1,8 +1,7 @@
 import os
 import shutil
 from pathlib import Path
-from tkinter import messagebox
-import tkinter as tk
+from gi.repository import Gtk, GdkPixbuf
 
 modifications_en_cours = False
 
@@ -41,64 +40,82 @@ def apply_new_icon(theme_name, category, chemin_selectionne, icone_originale_pat
         modifications_en_cours = True
         return dest_path
     except Exception as e:
-        messagebox.showerror("Erreur", f"Impossible de changer l'icône : {e}")
+        # Show error dialog - parent will be handled by caller
+        print(f"Error applying icon: {e}")
         return None
 
 def refresh_icone_widget(widget, chemin_image, load_image_func):
     """
-    Met à jour un widget Tkinter avec la nouvelle icône.
-    widget : label ou autre widget
+    Met à jour un widget GTK Image avec la nouvelle icône.
+    widget : Gtk.Image
     chemin_image : chemin complet vers l'image temporaire
     load_image_func : fonction load_image(path, size=(.., ..))
     """
     if not Path(chemin_image).exists():
         return
 
-    img = load_image_func(str(chemin_image), (128,128))
+    img = load_image_func(str(chemin_image), (128, 128))
     if img:
-        # garder une référence stable
-        if not hasattr(widget, "_image_refs"):
-            widget._image_refs = {}
-        widget._image_refs[str(chemin_image)] = img
-
-        widget.config(image=img, text="")
-        widget.image = img  # obligatoire pour Tkinter
+        # Scale to 128x128
+        img = img.scale_simple(128, 128, GdkPixbuf.InterpType.BILINEAR)
+        widget.set_from_pixbuf(img)
     else:
-        widget.config(image="", text=Path(chemin_image).name)
+        widget.set_from_icon_name("image-missing", Gtk.IconSize.DIALOG)
 
 def refresh_icon_cell(cell_widget, chemin_image, load_image_func):
     """
-    Met à jour une cellule d'icône (Frame contenant un Label) avec la nouvelle image.
+    Met à jour une cellule d'icône avec la nouvelle image.
+    cell_widget est un Gtk.EventBox contenant un Gtk.Frame qui contient un Gtk.Box avec un Gtk.Image
     """
     from pathlib import Path
     if not Path(chemin_image).exists():
         return
 
     # charge image 64x64
-    img = load_image_func(str(chemin_image), (64,64))
+    img = load_image_func(str(chemin_image), (64, 64))
     if not img:
         return
 
-    # trouver le Label enfant
-    lbl = None
-    for child in cell_widget.winfo_children():
-        if isinstance(child, tk.Label):
-            lbl = child
+    # Scale to 64x64
+    img = img.scale_simple(64, 64, GdkPixbuf.InterpType.BILINEAR)
+
+    # Naviguer dans la structure : EventBox -> Frame -> VBox -> Image
+    frame = None
+    if isinstance(cell_widget, Gtk.EventBox):
+        # EventBox peut contenir un Frame
+        for child in cell_widget.get_children():
+            if isinstance(child, Gtk.Frame):
+                frame = child
+                break
+    elif isinstance(cell_widget, Gtk.Frame):
+        frame = cell_widget
+
+    if frame is None:
+        return
+
+    # Trouver le VBox à l'intérieur du Frame
+    vbox = None
+    for child in frame.get_children():
+        if isinstance(child, Gtk.Box):
+            vbox = child
             break
 
-    # si aucun Label existant, en créer un
-    if lbl is None:
-        lbl = tk.Label(cell_widget)
-        lbl.pack(expand=True, fill="both")
+    if vbox is None:
+        return
 
-    # stocker la référence
-    if not hasattr(lbl, "_image_refs"):
-        lbl._image_refs = {}
-    lbl._image_refs[str(chemin_image)] = img
+    # Trouver le Gtk.Image dans le VBox
+    img_widget = None
+    for child in vbox.get_children():
+        if isinstance(child, Gtk.Image):
+            img_widget = child
+            break
+
+    # Si aucun Image existant, ne rien faire (structure invalide)
+    if img_widget is None:
+        return
 
     # appliquer l'image
-    lbl.config(image=img, text="")
-    lbl.image = img  # 🔥 obligatoire
+    img_widget.set_from_pixbuf(img)
 
 def has_unsaved_changes():
     print(modifications_en_cours)

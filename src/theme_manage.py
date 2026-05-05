@@ -1,10 +1,13 @@
-import tkinter as tk
-from tkinter import messagebox
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk
 import os
+import subprocess
 import re
 import random
 import shutil
 import configparser
+from pathlib import Path
 
 SYSTEM_PATH = "/usr/share/icons"
 USER_PATH = os.path.expanduser("~/.local/share/icons")
@@ -69,14 +72,16 @@ def get_theme_dirs_with_inheritance(theme_name):
 def create_theme_popup(parent, theme_listbox):
     system, custom = list_themes()
 
-    popup = tk.Toplevel(parent)
-    popup.title("Create Theme")
-    popup.geometry("375x250")
-    popup.resizable(False, False)  # ❌ non redimensionnable
+    popup = Gtk.Window()
+    popup.set_title("Create Theme")
+    popup.set_default_size(375, 250)
+    popup.set_resizable(False)
+    popup.set_transient_for(parent)
+    popup.set_modal(True)
 
-    selected_theme = tk.StringVar()
-    name_var = tk.StringVar()
-    search_var = tk.StringVar()
+    selected_theme = {"value": ""}
+    name_var = {"value": ""}
+    search_var = {"value": ""}
 
     # -------- LOGIC --------
 
@@ -101,78 +106,117 @@ def create_theme_popup(parent, theme_listbox):
 
     # -------- UI --------
 
-    left = tk.Frame(popup)
-    left.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+    main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    main_box.set_margin_start(10)
+    main_box.set_margin_end(10)
+    main_box.set_margin_top(10)
+    main_box.set_margin_bottom(10)
+    popup.add(main_box)
 
-    tk.Entry(left, textvariable=search_var).pack(fill="x", pady=(0,5))
+    # Left side
+    left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    main_box.pack_start(left, True, True, 0)
 
-    listbox_frame = tk.Frame(left)
-    listbox_frame.pack(fill="both", expand=True)
+    search_entry = Gtk.Entry()
+    search_entry.set_placeholder_text("Search...")
+    left.pack_start(search_entry, False, False, 0)
 
-    scrollbar = tk.Scrollbar(listbox_frame)
-    scrollbar.pack(side="right", fill="y")
+    listbox_frame = Gtk.Frame()
+    left.pack_start(listbox_frame, True, True, 0)
 
-    listbox = tk.Listbox(listbox_frame, yscrollcommand=scrollbar.set)
-    listbox.pack(side="left", fill="both", expand=True)
-    scrollbar.config(command=listbox.yview)
+    # Create TreeView for themes
+    theme_store = Gtk.ListStore(str)
+    listbox = Gtk.TreeView(model=theme_store)
+    listbox.set_headers_visible(False)
+
+    renderer = Gtk.CellRendererText()
+    column = Gtk.TreeViewColumn("Theme", renderer, text=0)
+    listbox.append_column(column)
+
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scrolled.add(listbox)
+    listbox_frame.add(scrolled)
+
+    # Right side
+    right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    main_box.pack_start(right, True, True, 0)
+
+    lbl_base = Gtk.Label(label="Base Theme:")
+    lbl_base.set_alignment(0, 0.5)
+    right.pack_start(lbl_base, False, False, 0)
+
+    base_label = Gtk.Label(label="None")
+    base_label.set_alignment(0, 0.5)
+    right.pack_start(base_label, False, False, 0)
+
+    lbl_name = Gtk.Label(label="Theme Name:")
+    lbl_name.set_alignment(0, 0.5)
+    right.pack_start(lbl_name, False, False, 0)
+
+    name_entry = Gtk.Entry()
+    right.pack_start(name_entry, False, False, 0)
+
+    btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    right.pack_end(btn_box, False, False, 0)
 
     def refresh():
-        q = search_var.get().lower()
-        listbox.delete(0, "end")
+        q = search_entry.get_text().lower()
+        theme_store.clear()
 
-        listbox.insert("end", "—— System Themes ——")
+        # System themes section
+        theme_store.append(["—— System Themes ——"])
         for t in system:
             if q in t.lower():
-                listbox.insert("end", t)
+                theme_store.append([t])
 
-        listbox.insert("end", "")
-        listbox.insert("end", "—— Custom Themes ——")
+        theme_store.append([""])
+        theme_store.append(["—— Custom Themes ——"])
         for t in custom:
             if q in t.lower():
-                listbox.insert("end", t)
+                theme_store.append([t])
 
-    search_var.trace_add("write", lambda *args: refresh())
+    def on_select(selection):
+        model, treeiter = selection.get_selected()
+        if not treeiter:
+            return
+        val = model.get_value(treeiter, 0)
+        if val.startswith("——") or val == "":
+            return
+        selected_theme["value"] = val
+        base_label.set_text(val)
+        name_entry.set_text(generate_name(val))
+
+    selection = listbox.get_selection()
+    selection.connect("changed", on_select)
+
+    search_entry.connect("changed", lambda *args: refresh())
     refresh()
 
-    right = tk.Frame(popup)
-    right.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-
-    tk.Label(right, text="Base Theme").pack(anchor="w")
-    base_label = tk.Label(right, text="None")
-    base_label.pack(anchor="w", pady=(0, 10))
-
-    tk.Label(right, text="Theme Name").pack(anchor="w")
-    tk.Entry(right, textvariable=name_var).pack(fill="x", pady=(0,10))
-
-    def on_select(event):
-        if not listbox.curselection():
-            return
-        val = listbox.get(listbox.curselection())
-        if val.startswith("—") or val == "":
-            return
-        selected_theme.set(val)
-        base_label.config(text=val)
-        name_var.set(generate_name(val))
-
-    listbox.bind("<<ListboxSelect>>", on_select)
-
-    # -------- ACTIONS --------
-
-    btn_frame = tk.Frame(right)
-    btn_frame.pack(side="bottom", fill="x", pady=10)
-
-    def create():
-        base = selected_theme.get()
-        name = name_var.get().strip()
+    def create_theme():
+        base = selected_theme["value"]
+        name = name_entry.get_text().strip()
 
         if not base:
-            return messagebox.showerror("Error", "Select a base theme")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "Select a base theme")
+            dialog.run()
+            dialog.destroy()
+            return
         if not name:
-            return messagebox.showerror("Error", "Invalid name")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "Invalid name")
+            dialog.run()
+            dialog.destroy()
+            return
         if name in system or name in custom:
-            return messagebox.showerror("Error", "Theme already exists")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "Theme already exists")
+            dialog.run()
+            dialog.destroy()
+            return
         if not re.match(r"^[^/\\]+$", name):
-            return messagebox.showerror("Error", "Invalid characters")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "Invalid characters")
+            dialog.run()
+            dialog.destroy()
+            return
 
         path = os.path.join(USER_PATH, name)
         os.makedirs(path, exist_ok=True)
@@ -223,12 +267,21 @@ def create_theme_popup(parent, theme_listbox):
                     f.write(f"Context={CONTEXTS[cat]}\n")
                     f.write("Type=Fixed\n\n")
 
-        messagebox.showinfo("Success", "Theme created")
+        dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.INFO, Gtk.ButtonsType.OK, "Theme created")
+        dialog.run()
+        dialog.destroy()
         popup.destroy()
         refresh_theme_listbox(theme_listbox)
 
-    tk.Button(btn_frame, text="Create", command=create, bg="#28a745", fg="white").pack(expand=True, fill="x", padx=5)
-    tk.Button(btn_frame, text="Cancel", command=popup.destroy, bg="#555555", fg="white").pack(expand=True, fill="x", padx=5)
+    btn_create = Gtk.Button(label="Create")
+    btn_create.connect("clicked", lambda *args: create_theme())
+    btn_box.pack_start(btn_create, True, True, 0)
+
+    btn_cancel = Gtk.Button(label="Cancel")
+    btn_cancel.connect("clicked", lambda *args: popup.destroy())
+    btn_box.pack_start(btn_cancel, True, True, 0)
+
+    popup.show_all()
 
 
 ################################ delete theme ####################################
@@ -237,109 +290,155 @@ def delete_theme_popup(parent, theme_listbox):
     _, custom = list_themes()  # on ne prend que les thèmes custom
 
     if not custom:
-        messagebox.showinfo("Info", "No custom themes to delete.")
+        dialog = Gtk.MessageDialog(parent, 0, Gtk.MessageType.INFO, Gtk.ButtonsType.OK, "No custom themes to delete.")
+        dialog.run()
+        dialog.destroy()
         return
 
-    popup = tk.Toplevel(parent)
-    popup.title("Delete Theme")
-    popup.geometry("375x250")
-    popup.resizable(False, False)
+    popup = Gtk.Window()
+    popup.set_title("Delete Theme")
+    popup.set_default_size(375, 250)
+    popup.set_resizable(False)
+    popup.set_transient_for(parent)
+    popup.set_modal(True)
 
-    selected_theme = tk.StringVar()
-    search_var = tk.StringVar()
+    selected_theme = {"value": ""}
 
     # -------- UI --------
 
-    left = tk.Frame(popup)
-    left.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+    main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    main_box.set_margin_start(10)
+    main_box.set_margin_end(10)
+    main_box.set_margin_top(10)
+    main_box.set_margin_bottom(10)
+    popup.add(main_box)
 
-    tk.Entry(left, textvariable=search_var).pack(fill="x", pady=(0,5))
+    # Left side
+    left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    main_box.pack_start(left, True, True, 0)
 
-    listbox_frame = tk.Frame(left)
-    listbox_frame.pack(fill="both", expand=True)
+    search_entry = Gtk.Entry()
+    search_entry.set_placeholder_text("Search...")
+    left.pack_start(search_entry, False, False, 0)
 
-    scrollbar = tk.Scrollbar(listbox_frame)
-    scrollbar.pack(side="right", fill="y")
+    listbox_frame = Gtk.Frame()
+    left.pack_start(listbox_frame, True, True, 0)
 
-    listbox = tk.Listbox(listbox_frame, yscrollcommand=scrollbar.set)
-    listbox.pack(side="left", fill="both", expand=True)
-    scrollbar.config(command=listbox.yview)
+    # Create TreeView for themes
+    theme_store = Gtk.ListStore(str)
+    listbox = Gtk.TreeView(model=theme_store)
+    listbox.set_headers_visible(False)
+
+    renderer = Gtk.CellRendererText()
+    column = Gtk.TreeViewColumn("Theme", renderer, text=0)
+    listbox.append_column(column)
+
+    scrolled = Gtk.ScrolledWindow()
+    scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    scrolled.add(listbox)
+    listbox_frame.add(scrolled)
+
+    # Right side
+    right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    main_box.pack_start(right, True, True, 0)
+
+    lbl_selected = Gtk.Label(label="Selected Theme:")
+    lbl_selected.set_alignment(0, 0.5)
+    right.pack_start(lbl_selected, False, False, 0)
+
+    theme_label = Gtk.Label(label="None")
+    theme_label.set_alignment(0, 0.5)
+    right.pack_start(theme_label, False, False, 0)
+
+    lbl_confirm = Gtk.Label(label="Theme name to confirm:")
+    lbl_confirm.set_alignment(0, 0.5)
+    right.pack_start(lbl_confirm, False, False, 0)
+
+    name_entry = Gtk.Entry()
+    right.pack_start(name_entry, False, False, 0)
+
+    btn_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+    right.pack_end(btn_box, False, False, 0)
 
     def refresh():
-        q = search_var.get().lower()
-        listbox.delete(0, "end")
+        q = search_entry.get_text().lower()
+        theme_store.clear()
 
-        listbox.insert("end", "—— Custom Themes ——")
+        theme_store.append(["—— Custom Themes ——"])
         for t in custom:
             if q in t.lower():
-                listbox.insert("end", t)
+                theme_store.append([t])
 
-    search_var.trace_add("write", lambda *args: refresh())
+    def on_select(selection):
+        model, treeiter = selection.get_selected()
+        if not treeiter:
+            return
+        val = model.get_value(treeiter, 0)
+        if val.startswith("——") or val == "":
+            return
+        selected_theme["value"] = val
+        theme_label.set_text(val)
+
+    selection = listbox.get_selection()
+    selection.connect("changed", on_select)
+
+    search_entry.connect("changed", lambda *args: refresh())
     refresh()
 
-    def on_select(event):
-        if not listbox.curselection():
-            return
-        val = listbox.get(listbox.curselection())
-        if val.startswith("—") or val == "":
-            return
-        selected_theme.set(val)
-
-    listbox.bind("<<ListboxSelect>>", on_select)
-
-    # -------- CONFIRMATION & ACTIONS --------
-
-    right = tk.Frame(popup)
-    right.pack(side="right", fill="both", expand=True, padx=10, pady=10)
-
-    tk.Label(right, text="Selected Theme").pack(anchor="w")
-    theme_label = tk.Label(right, text="None")
-    theme_label.pack(anchor="w", pady=(0, 10))
-
-    def update_label(*args):
-        theme_label.config(text=selected_theme.get())
-
-    selected_theme.trace_add("write", update_label)
-
-    name_var = tk.StringVar()
-
-    tk.Label(right, text="Theme name to confirm").pack(anchor="w")
-    tk.Entry(right, textvariable=name_var).pack(fill="x", pady=(0,10))
-
-    btn_frame = tk.Frame(right)
-    btn_frame.pack(side="bottom", fill="x", pady=10)
-
-    def delete():
-        theme = selected_theme.get()
+    def delete_theme():
+        theme = selected_theme["value"]
         if not theme:
-            return messagebox.showerror("Error", "Select a theme")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "Select a theme")
+            dialog.run()
+            dialog.destroy()
+            return
 
-        name_confirm = name_var.get().strip()
+        name_confirm = name_entry.get_text().strip()
         if name_confirm != theme:
-            messagebox.showerror("Error", "Name does not match")
-            name_var.set("")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, "Name does not match")
+            dialog.run()
+            dialog.destroy()
+            name_entry.set_text("")
             return
 
         path = os.path.join(USER_PATH, theme)
         try:
-            import shutil
             shutil.rmtree(path)
-            messagebox.showinfo("Success", f"Theme '{theme}' deleted")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.INFO, Gtk.ButtonsType.OK, f"Theme '{theme}' deleted")
+            dialog.run()
+            dialog.destroy()
             popup.destroy()
             refresh_theme_listbox(theme_listbox)
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to delete: {e}")
+            dialog = Gtk.MessageDialog(popup, 0, Gtk.MessageType.ERROR, Gtk.ButtonsType.OK, f"Failed to delete: {e}")
+            dialog.run()
+            dialog.destroy()
 
-    tk.Button(btn_frame, text="Delete", command=delete, bg="#dc3545", fg="white").pack(expand=True, fill="x", padx=5)
-    tk.Button(btn_frame, text="Cancel", command=popup.destroy, bg="#555555", fg="white").pack(expand=True, fill="x", padx=5)
+    btn_delete = Gtk.Button(label="Delete")
+    btn_delete.connect("clicked", lambda *args: delete_theme())
+    btn_box.pack_start(btn_delete, True, True, 0)
+
+    btn_cancel = Gtk.Button(label="Cancel")
+    btn_cancel.connect("clicked", lambda *args: popup.destroy())
+    btn_box.pack_start(btn_cancel, True, True, 0)
+
+    popup.show_all()
 
 ########################## refresh listbox #############################
 
-def refresh_theme_listbox(theme_listbox) :
+def refresh_theme_listbox(theme_listbox):
     _, theme_list = list_themes()
-    theme_listbox.delete(0, tk.END)
-    for theme in theme_list :
-        theme_listbox.insert(tk.END, theme)
+    # Clear the model
+    model = theme_listbox.get_model()
+    if model:
+        model.clear()
+    else:
+        # Create new model if none exists
+        model = Gtk.ListStore(str)
+        theme_listbox.set_model(model)
+    
+    for theme in theme_list:
+        model.append([theme])
 
 ################## mettre à jour le theme selectionné ####################
 
@@ -436,17 +535,19 @@ def rename_theme(old_name, new_name):
 
 def on_theme_select(event, theme_listbox, tabs, entry_name):
     """Quand on clique sur un thème dans la listbox, met à jour les onglets."""
-    selection = theme_listbox.curselection()
+    selection = theme_listbox.get_selection()
     if not selection:
         return
-    theme_name = theme_listbox.get(selection[0])
+    model, treeiter = selection.get_selected()
+    if not treeiter:
+        return
+    theme_name = model.get_value(treeiter, 0)
 
     # 🔹 Mettre à jour l'Entry Name
-    entry_name.delete(0, tk.END)
-    entry_name.insert(0, theme_name)
+    entry_name.set_text(theme_name)
 
-    # 🔹 récupérer les chemins du thème + héritage
-    theme_dirs = get_theme_paths(theme_name)
+    # 🔹 récupérer les chemins du thème + héritage (inclut le dossier temp)
+    theme_dirs = get_theme_dirs_with_inheritance(theme_name)
 
     # 🔹 reconstruire toutes les icônes pour chaque onglet
     for tab in tabs:
@@ -477,41 +578,21 @@ def save_theme(theme_name):
     # suppression du temp
     shutil.rmtree(temp_path)
 
-    # Rafraîchir le cache des icônes pour que Thunar affiche les nouvelles icônes
-    import subprocess
-    
     print(f"Updating icon cache for theme: {theme_name} at {final_path}")
+
     if shutil.which('gtk-update-icon-cache'):
         try:
-            # Rafraîchir le cache du thème spécifique
-            result = subprocess.run(['gtk-update-icon-cache', '-f', str(final_path)], 
-                                  check=True, capture_output=True, text=True)
+            subprocess.run(
+                ['gtk-update-icon-cache', '-f', str(final_path)],
+                check=True
+            )
             print(f"Icon cache updated successfully for theme {theme_name}")
-            print(f"gtk-update-icon-cache output: {result.stdout}")
-                    
-            # Forcer le rechargement du thème dans XFCE
-            try:
-                result3 = subprocess.run(['xfconf-query', '-c', 'xsettings', '-p', '/Net/IconThemeName', '-s', theme_name], 
-                                       check=True, capture_output=True, text=True)
-                print(f"XFCE icon theme reloaded: {theme_name}")
-                print(f"xfconf-query output: {result3.stdout}")
-            except subprocess.CalledProcessError as e3:
-                print(f"Failed to reload XFCE icon theme with xfconf-query: {e3}")
-                print(f"xfconf-query error: {e3.stderr}")
-                # Essayer avec gsettings comme alternative
-                try:
-                    result4 = subprocess.run(['gsettings', 'set', 'org.gnome.desktop.interface', 'icon-theme', theme_name], 
-                                           check=True, capture_output=True, text=True)
-                    print(f"GNOME icon theme reloaded with gsettings: {theme_name}")
-                except subprocess.CalledProcessError as e4:
-                    print(f"Failed to reload icon theme with gsettings: {e4}")
-                    print("Icon theme may need manual reload or system restart")
-                    
+
         except subprocess.CalledProcessError as e:
             print(f"Failed to update icon cache: {e}")
-            print(f"Error output: {e.stderr}")
     else:
-        print("gtk-update-icon-cache not found, icon cache not updated")
+        print("gtk-update-icon-cache not found")
+
     changeFalse()
 
 
