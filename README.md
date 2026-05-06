@@ -40,7 +40,6 @@ After installation, launch the application. You will arrive at a simple interfac
 3. Modify icons by category
 4. Save your changes
 
-The interface guides you through the different steps of creating and modifying themes.
 
 ## Screenshots
 
@@ -52,7 +51,7 @@ The interface guides you through the different steps of creating and modifying t
 ## Dependencies
 
 - Python 3
-- Tkinter (included in Python) and PyGObject
+- PyGObject
 - Pillow (PIL)
 - CairoSVG
 
@@ -66,5 +65,20 @@ Developed by Samourai-T3
 
 ## Version
 
-Current version: v1.0
-Next version: v2.0 (graphical interface change for PyGObject)
+
+### Current version : 
+
+**v2.1**
+- Bug fixes
+
+### Next version : 
+
+**v2.x**
+
+- Bug fixes
+- Performance improvements
+- Minor enhancements
+
+**v3.0**
+- User theme editing support
+- GTK and XFWM4 theme management

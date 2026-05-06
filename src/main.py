@@ -639,7 +639,7 @@ entry_name.set_width_chars(50)
 entry_name.connect("activate", rename_theme_entry)
 right_box.pack_start(entry_name, False, False, 4)
 
-help_label = Gtk.Label(label="Appuie sur Entrée pour renommer le thème sélectionné.")
+help_label = Gtk.Label(label="Enter the theme name and press Enter to rename it. The changes are automatically saved to the current session.")
 help_label.set_alignment(0, 0.5)
 help_label.set_opacity(0.7)
 right_box.pack_start(help_label, False, False, 6)
@@ -943,11 +943,7 @@ class IconTab:
         
             # Nom du fichier original
             filename = self.current_theme_name + "_" + Path(source).name
-            dest = os.path.join(os.path.expanduser("~"), downloads_dir, filename)
-
-            print(f"Copying from {source} to {dest}")
-            print(filename)
-            
+            dest = os.path.join(os.path.expanduser("~"), downloads_dir, filename)    
 
             shutil.copy(source, dest)
 
@@ -1137,7 +1133,6 @@ def on_mime_select(event):
                 current_mime_icon_path = icon_path
                 return
     # If not found, show placeholder
-    print("DEBUG: No icon found")
     mime_image_placeholder.set_from_icon_name("image-missing", Gtk.IconSize.DIALOG)
     if current_mime_name:
         current_mime_icon_path = f"/fake/{current_mime_name}.png"
@@ -1248,11 +1243,9 @@ previous_theme_name = None
 
 def on_theme_change(event):
     global theme_name, previous_theme_name
-    print(theme_name)
-    
+
     selection = theme_listbox.get_selection()
     if not selection:
-        print("no selection, skipping")
         return
     model, treeiter = selection.get_selected()
     if not treeiter:
@@ -1285,7 +1278,6 @@ def on_theme_change(event):
     changeFalse()
     theme_name = new_theme_name
     previous_theme_name = new_theme_name
-    print(theme_name)
     on_theme_select(None, theme_listbox, tabs, entry_name)
 
 theme_name = ""

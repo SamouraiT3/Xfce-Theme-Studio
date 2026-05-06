@@ -578,15 +578,12 @@ def save_theme(theme_name):
     # suppression du temp
     shutil.rmtree(temp_path)
 
-    print(f"Updating icon cache for theme: {theme_name} at {final_path}")
-
     if shutil.which('gtk-update-icon-cache'):
         try:
             subprocess.run(
                 ['gtk-update-icon-cache', '-f', str(final_path)],
                 check=True
             )
-            print(f"Icon cache updated successfully for theme {theme_name}")
 
         except subprocess.CalledProcessError as e:
             print(f"Failed to update icon cache: {e}")

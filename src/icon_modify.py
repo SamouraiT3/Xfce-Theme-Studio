@@ -31,16 +31,12 @@ def apply_new_icon(theme_name, category, chemin_selectionne, icone_originale_pat
     # chemin final dans le temp
     dest_path = dest_dir / nom_icone
 
-    print(nom_icone)
-    print(dest_path)
-
     try:
         shutil.copy(chemin_selectionne, dest_path)
         global modifications_en_cours
         modifications_en_cours = True
         return dest_path
     except Exception as e:
-        # Show error dialog - parent will be handled by caller
         print(f"Error applying icon: {e}")
         return None
 
@@ -118,7 +114,6 @@ def refresh_icon_cell(cell_widget, chemin_image, load_image_func):
     img_widget.set_from_pixbuf(img)
 
 def has_unsaved_changes():
-    print(modifications_en_cours)
     return modifications_en_cours
 
 def changeFalse() :
