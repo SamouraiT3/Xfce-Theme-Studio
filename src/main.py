@@ -1,6 +1,6 @@
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GdkPixbuf, Gio
+from gi.repository import Gtk, Gdk, GdkPixbuf, Gio, GLib
 from pathlib import Path
 import cairosvg
 from io import BytesIO
@@ -19,6 +19,7 @@ from mimetype_tab import refresh_list, items, displayed
 # Fenêtre principale
 root = Gtk.Window()
 root.set_title("Xfce Theme Studio -- Create and customize Icon theme")
+root.set_icon_name("xfce-theme-studio")
 root.set_default_size(975, 650)
 root.set_resizable(True)
 
@@ -421,8 +422,49 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
     visible_matches = []
     selected_item = {"item": None}
     selected_widget = {"widget": None}
+    items_to_load = []
+
+    def load_icons_batch(start_idx):
+        """Load icons asynchronously in batches"""
+        batch_size = 6
+        end_idx = min(start_idx + batch_size, len(items_to_load))
+        
+        for i in range(start_idx, end_idx):
+            item_data = items_to_load[i]
+            img_widget = item_data["img_widget"]
+            vbox = item_data["vbox"]
+            item = item_data["item"]
+            
+            icon_img = load_image(item["path"], (64, 64))
+            if icon_img:
+                icon_img = icon_img.scale_simple(64, 64, GdkPixbuf.InterpType.BILINEAR)
+                GLib.idle_add(img_widget.set_from_pixbuf, icon_img)
+                item_data["corrupted"] = False
+            else:
+                # Mark as corrupted
+                def set_corrupted(vbox_ref, img_ref):
+                    vbox_ref.remove(img_ref)
+                    label = Gtk.Label(label="Corrupted")
+                    label.set_size_request(64, 64)
+                    vbox_ref.pack_start(label, False, False, 4)
+                    label.show()
+                    return False
+                GLib.idle_add(set_corrupted, vbox, img_widget)
+                item_data["corrupted"] = True
+        
+        # Schedule next batch
+        if end_idx < len(items_to_load):
+            GLib.idle_add(load_icons_batch, end_idx)
+        
+        return False
 
     def select_item(item, widget):
+        is_corrupted = False
+        for item_data in items_to_load:
+            if item_data["item"] is item:
+                is_corrupted = item_data.get("corrupted", False)
+                break
+        
         if selected_widget["widget"]:
             old_widget = selected_widget["widget"]
             old_widget.set_state_flags(Gtk.StateFlags.NORMAL, True)
@@ -431,6 +473,9 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
         selected_widget["widget"] = widget
         widget.set_state_flags(Gtk.StateFlags.SELECTED, True)
         widget.get_style_context().add_class("icon-cell-selected")
+        
+        # Disable use button if corrupted
+        use_btn.set_sensitive(not is_corrupted)
 
     def refresh_grid(*args):
         selected_item["item"] = None
@@ -444,6 +489,7 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
             grid.remove(child)
 
         visible_matches.clear()
+        items_to_load.clear()
         columns = 4
         row = 0
         col = 0
@@ -468,18 +514,23 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
             wrapper.set_visible_window(False)
             grid.attach(wrapper, col, row, 1, 1)
 
-            icon_img = load_image(item["path"], (64, 64))
-            if icon_img:
-                icon_img = icon_img.scale_simple(64, 64, GdkPixbuf.InterpType.BILINEAR)
-                img = Gtk.Image.new_from_pixbuf(icon_img)
-            else:
-                img = Gtk.Label(label=Path(item["path"]).name)
+            # Create empty image widget for lazy loading
+            img = Gtk.Image()
+            img.set_size_request(64, 64)
             vbox.pack_start(img, False, False, 4)
 
             theme_label = Gtk.Label(label=item["theme"])
             theme_label.set_line_wrap(True)
             theme_label.set_width_chars(15)
             vbox.pack_start(theme_label, False, False, 4)
+
+            item_data = {
+                "item": item,
+                "img_widget": img,
+                "vbox": vbox,
+                "corrupted": False
+            }
+            items_to_load.append(item_data)
 
             def make_callback(selected=item, widget=cell):
                 return lambda *args: select_item(selected, widget)
@@ -492,6 +543,10 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
                 row += 1
 
         grid.show_all()
+        
+        # Start lazy loading
+        if items_to_load:
+            GLib.idle_add(load_icons_batch, 0)
 
     def use_selected_icon():
         if not selected_item["item"]:
@@ -546,9 +601,10 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
     btn_box = Gtk.Box(spacing=6)
     box.pack_start(btn_box, False, False, 0)
 
-    btn_use = Gtk.Button(label="Use this icon")
-    btn_use.connect("clicked", lambda *args: use_selected_icon())
-    btn_box.pack_start(btn_use, False, False, 0)
+    use_btn = Gtk.Button(label="Use this icon")
+    use_btn.set_sensitive(False)  # Disabled by default until an icon is selected
+    use_btn.connect("clicked", lambda *args: use_selected_icon())
+    btn_box.pack_start(use_btn, False, False, 0)
 
     btn_download = Gtk.Button(label="Download icon")
     btn_download.connect("clicked", lambda *args: download_selected_icon())
@@ -752,10 +808,17 @@ class IconTab:
     def on_click(self, path, cell, img):
 
         self.current_icon_path = path
+        
+        # Check if the icon is corrupted by finding it in icon_items
+        is_corrupted = False
+        for item in self.icon_items:
+            if item["cell"] is cell:
+                is_corrupted = item.get("corrupted", False)
+                break
 
-        self.select_icon(cell, path, img)
+        self.select_icon(cell, path, img, is_corrupted)
 
-    def select_icon(self, cell, icon_id, icon_photo=None):
+    def select_icon(self, cell, icon_id, icon_photo=None, is_corrupted=False):
         # reset ancienne sélection
         if self.selected_icon_cell["cell"]:
             old_cell = self.selected_icon_cell["cell"]
@@ -767,6 +830,8 @@ class IconTab:
         cell.set_state_flags(Gtk.StateFlags.SELECTED, True)
         cell.get_style_context().add_class("icon-cell-selected")
 
+        # Disable download button if image is corrupted
+        self.btn_download_icon.set_sensitive(not is_corrupted)
         
         # image preview
         img = self.load_image(icon_id, (128, 128))
@@ -800,7 +865,8 @@ class IconTab:
             paths,
             self.load_image,
             self.on_click,
-            GRID_COLS
+            GRID_COLS,
+            lazy_loading=True
         )
 
         print(f"RESIZE terminé : GRID_COLS={GRID_COLS}")
@@ -826,7 +892,8 @@ class IconTab:
             self.search_items,
             self.load_image,
             self.on_click,
-            GRID_COLS
+            GRID_COLS,
+            lazy_loading=True
         )
 
     def on_upload_click(self):
@@ -1305,6 +1372,7 @@ def on_close(*args):
             reset_theme(theme_name)
 
     return False  # Permettre la fermeture
+
 
 root.connect("delete-event", on_close)
 root.show_all()
