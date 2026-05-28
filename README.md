@@ -19,33 +19,19 @@ Xfce Theme Studio is a Python application using PyGObject that allows users to e
 - Simple and intuitive graphical interface
 - Support for SVG and PNG formats
 
-## Installation
+# Installation
 
-### Via .deb (recommended for Linux Mint)
-
-1. Download the `.deb` file from the Releases section
-2. Double-click the `.deb` file in your file manager (Thunar) from the Downloads folder to install it automatically.
-
-### Via binary
-
-1. Download the binary from the Releases section
-2. Double-click the binary in your file manager. Linux will ask to make it executable; accept to launch the application.
-
-## Usage
-
-After installation, launch the application. You will arrive at a simple interface where you can:
-
-1. Select an existing theme to modify
-2. Create a new theme
-3. Modify icons by category
-4. Save your changes
-
+1. Download `installer.py` from the Releases section
+2. Open a terminal in the download directory (`cd 'directory'` )
+3. Run:  `python3 installer.py`
+4. click on **Install/Update**
 
 ## Screenshots
 
-![Icon Modification](assets/screenshot1.png)
+![Icon Modification](assets/screenshot1.png) 
 ![Mimetype Modification](assets/screenshot2.png)
 ![Interface](assets/screenshot3.png)
+![GTK Theme Modification](assets/screenshot4.png)
 
 
 ## Dependencies
@@ -61,24 +47,46 @@ This project is licensed under the GNU General Public License v3.0.
 
 ## Author
 
-Developed by Samourai-T3
+ **Developed by Samourai-T3**
+
+**Community contributions are welcome.**
+
+You can help improve `theme_structure.py` by adding new customizable elements and parameters.
+
+- Open a Pull Request
+- Or send your `theme_structure.py` file by email to: samourai.t3@gmail.com
+
+An example structure is available in:
+
+
+`examples/theme_structure.py`
+
 
 ## Version
 
 
 ### Current version : 
 
-**v2.1**
-- Bug fixes
-
-### Next version : 
-
-**v2.x**
-
-- Bug fixes
-- Performance improvements
-- Minor enhancements
-
 **v3.0**
-- User theme editing support
-- GTK and XFWM4 theme management
+- Initial GTK theme customization support
+- Built-in installer
+- Theme editing improvements
+- Performance improvements
+- UI enhancements
+
+### Next versions:
+
+**v3.x**
+- Bug fixes
+- Stability improvements
+- Performance improvements
+- GTK compatibility improvements
+
+**v3.x.x**
+- New customization elements and parameters
+- Expanded `theme_structure.py` support
+- Improved theme editing capabilities
+- Community contributions for `theme_structure.py`
+
+**v4.0**
+- XFWM4 theme customization support

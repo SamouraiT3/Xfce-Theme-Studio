@@ -12,24 +12,47 @@ import tarfile
 import webbrowser
 
 from icon_engine import tab_click, display_icon, best_icon
-from theme_manage import create_theme_popup, delete_theme_popup, refresh_theme_listbox, on_theme_select, save_theme, reset_theme, USER_PATH, SYSTEM_PATH, list_themes, get_theme_dirs_with_inheritance, rename_theme, find_theme_path
+from theme_manage import (
+    create_theme_popup,
+    delete_theme_popup,
+    refresh_theme_listbox,
+    on_theme_select,
+    save_theme,
+    reset_theme,
+    USER_PATH,
+    SYSTEM_PATH,
+    list_themes,
+    get_theme_dirs_with_inheritance,
+    rename_theme,
+    find_theme_path,
+    create_gtk_theme_popup,
+    delete_gtk_theme_popup,
+    refresh_gtk_theme_listbox,
+    on_gtk_theme_select,
+    build_gtk_theme_ui,
+    save_gtk_theme,
+    reset_gtk_theme,
+    rename_gtk_theme,
+    list_gtk_themes,
+    find_gtk_theme_path,
+)
 from icon_modify import apply_new_icon, refresh_icone_widget, refresh_icon_cell, has_unsaved_changes, changeFalse
 from mimetype_tab import refresh_list, items, displayed
 
-# Fenêtre principale
+# Main window
 root = Gtk.Window()
-root.set_title("Xfce Theme Studio -- Create and customize Icon theme")
+root.set_title("Xfce Theme Studio -- Create and customize theme")
 root.set_icon_name("xfce-theme-studio")
 root.set_default_size(975, 650)
 root.set_resizable(True)
 
-# CSS pour le surlignage des icônes sélectionnées
+# CSS for highlighting selected icons
 css_provider = Gtk.CssProvider()
 css_provider.load_from_data(b"""
     .icon-cell-selected {
-        border: 2px solid #0078d4;
+        border: 2px solid @theme_selected_bg_color;
         border-radius: 6px;
-        background-color: rgba(0, 120, 212, 0.12);
+        background-color: alpha(@theme_selected_bg_color, 0.15);
     }
 """)
 Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
@@ -125,6 +148,77 @@ def messagebox_askyesno(title, message):
     dialog.destroy()
     return response == Gtk.ResponseType.YES
 
+current_mode = "icons"
+
+
+def is_icon_mode():
+    return current_mode == "icons"
+
+
+def refresh_mode_theme_listbox():
+    if is_icon_mode():
+        refresh_theme_listbox(theme_listbox)
+    else:
+        refresh_gtk_theme_listbox(theme_listbox)
+
+
+def update_mode_display():
+    mode_button.set_label(
+    "Icon themes" if is_icon_mode() else "GTK/XFWM4 themes"
+    )
+    entry_name.set_text("")
+    left_frame.set_label("Custom themes" if is_icon_mode() else "GTK/XFWM4 themes")
+    if is_icon_mode():
+        help_label.set_text("Enter the icon theme name and press Enter to rename it.")
+        right_content_stack.set_visible_child(icon_content_box)
+    else:
+        help_label.set_text("Select a GTK/XFWM4 theme and use the header actions to create or delete custom GTK themes.")
+        right_content_stack.set_visible_child(gtk_details_box)
+
+    refresh_mode_theme_listbox()
+
+
+def on_new_theme():
+    if is_icon_mode():
+        create_theme_popup(root, theme_listbox)
+    else:
+        create_gtk_theme_popup(root, theme_listbox)
+
+
+def on_delete_theme():
+    if is_icon_mode():
+        delete_theme_popup(root, theme_listbox)
+    else:
+        delete_gtk_theme_popup(root, theme_listbox)
+
+
+def on_save_theme_action():
+    global theme_name
+    if is_icon_mode():
+        save_theme(theme_name)
+        messagebox_showinfo("Saved", f"Icon theme '{theme_name}' saved.")
+    else:
+        message = save_gtk_theme(theme_name)
+        messagebox_showinfo("GTK/XFWM4 Save", message)
+
+
+def on_reset_theme_action():
+    global theme_name
+    if is_icon_mode():
+        reset_theme(theme_name)
+        messagebox_showinfo("Reset", f"Icon theme '{theme_name}' reset.")
+    else:
+        message = reset_gtk_theme(theme_name)
+        messagebox_showinfo("GTK/XFWM4 Reset", message)
+
+
+def on_mode_switch(combo):
+    global current_mode
+    text = combo.get_active_text()
+    current_mode = "icons" if text == "Icon themes" else "gtk"
+    update_mode_display()
+
+
 def import_theme():
     zenity_cmd = ['zenity', '--file-selection', '--title=Import Theme', '--file-filter=Themes | *.tar.gz *.zip']
     env = os.environ.copy()
@@ -172,8 +266,12 @@ def import_theme():
                         theme_source_dir = extract_dir
                     
                     # Copy to user themes
-                    system, custom = list_themes()
-                    dest = os.path.join(USER_PATH, theme_name)
+                    if is_icon_mode():
+                        system, custom = list_themes()
+                        dest = os.path.join(USER_PATH, theme_name)
+                    else:
+                        system, custom = list_gtk_themes()
+                        dest = os.path.join(os.path.expanduser("~/.themes"), theme_name)
                     
                     if theme_name in system or theme_name in custom:
                         overwrite = messagebox_askyesno(
@@ -186,7 +284,7 @@ def import_theme():
                     
                     shutil.copytree(theme_source_dir, dest, dirs_exist_ok=True)
                     messagebox_showinfo("Success", f"Theme '{theme_name}' imported from archive")
-                    refresh_theme_listbox(theme_listbox)
+                    refresh_mode_theme_listbox()
                     
                 except Exception as e:
                     messagebox_showerror("Error", f"Failed to extract archive: {e}")
@@ -195,8 +293,12 @@ def import_theme():
     else:
         # Handle directory import (existing code)
         theme_name = os.path.basename(os.path.normpath(selected_path))
-        system, custom = list_themes()
-        dest = os.path.join(USER_PATH, theme_name)
+        if is_icon_mode():
+            system, custom = list_themes()
+            dest = os.path.join(USER_PATH, theme_name)
+        else:
+            system, custom = list_gtk_themes()
+            dest = os.path.join(os.path.expanduser("~/.themes"), theme_name)
 
         if theme_name in system or theme_name in custom:
             overwrite = messagebox_askyesno(
@@ -210,7 +312,7 @@ def import_theme():
         try:
             shutil.copytree(selected_path, dest, dirs_exist_ok=True)
             messagebox_showinfo("Success", f"Theme '{theme_name}' imported")
-            refresh_theme_listbox(theme_listbox)
+            refresh_mode_theme_listbox()
         except Exception as e:
             messagebox_showerror("Error", f"Import failed: {e}")
 
@@ -220,7 +322,7 @@ def export_theme():
         messagebox_showerror("Error", "Select a theme first")
         return
 
-    source_dir = find_theme_path(theme_name)
+    source_dir = find_theme_path(theme_name, mode="icons" if is_icon_mode() else "gtk")
     if not source_dir or not os.path.isdir(source_dir):
         messagebox_showerror("Error", "Theme folder not found")
         return
@@ -257,7 +359,11 @@ def rename_theme_entry(event=None):
     if new_name == theme_name:
         return
 
-    success, error = rename_theme(theme_name, new_name)
+    if is_icon_mode():
+        success, error = rename_theme(theme_name, new_name)
+    else:
+        success, error = rename_gtk_theme(theme_name, new_name)
+
     if not success:
         messagebox_showerror("Error", error)
         entry_name.set_text(theme_name)
@@ -265,28 +371,29 @@ def rename_theme_entry(event=None):
 
     messagebox_showinfo("Success", f"Theme renamed to {new_name}")
     
-    # Obtenir le thème actuel du système
-    try:
-        result = subprocess.run(['xfconf-query', '-c', 'xsettings', '-p', '/Net/IconThemeName'], 
-                              capture_output=True, text=True)
-        current_system_theme = result.stdout.strip() if result.returncode == 0 else None
-        
-        # Si le thème renommé est le thème actif du système, le mettre à jour
-        if current_system_theme == theme_name:
-            subprocess.run(['xfconf-query', '-c', 'xsettings', '-p', '/Net/IconThemeName', '-s', new_name],
-                         capture_output=True)
-    except Exception as e:
-        print(f"Could not update system theme: {e}")
-    
-    theme_name = new_name
-    refresh_theme_listbox(theme_listbox)
+    if is_icon_mode():
+        try:
+            result = subprocess.run(['xfconf-query', '-c', 'xsettings', '-p', '/Net/IconThemeName'], 
+                                  capture_output=True, text=True)
+            current_system_theme = result.stdout.strip() if result.returncode == 0 else None
+            
+            if current_system_theme == theme_name:
+                subprocess.run(['xfconf-query', '-c', 'xsettings', '-p', '/Net/IconThemeName', '-s', new_name],
+                             capture_output=True)
+        except Exception as e:
+            print(f"Could not update system theme: {e}")
 
-    # Re-sélectionner le thème renommé
+    theme_name = new_name
+    refresh_mode_theme_listbox()
+
     model = theme_listbox.get_model()
     for i, row in enumerate(model):
         if row[0] == theme_name:
             theme_listbox.set_cursor(i, None)
-            on_theme_select(None, theme_listbox, tabs, entry_name)
+            if is_icon_mode():
+                on_theme_select(None, theme_listbox, tabs, entry_name)
+            else:
+                on_gtk_theme_select(None, theme_listbox, entry_name, gtk_details_label, gtk_structure_box)
             break
 
 # Aide au chargement des images avec ou sans Pillow
@@ -319,7 +426,7 @@ def load_image(path, size=(64, 64)):
 
         img = img.resize(size, Image.LANCZOS)
         
-        # Convertir via PNG en mémoire → GdkPixbuf copie les données (évite le bug GC de new_from_data)
+        # Convert via PNG in memory → GdkPixbuf copies the data (avoids new_from_data GC bug)
         if img.mode != 'RGBA':
             img = img.convert('RGBA')
         buf = BytesIO()
@@ -557,19 +664,19 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
         try:
             source_path = selected_item["item"]["path"]
             
-            # Obtenir le répertoire temporaire du thème actuel
+            # Get the temporary directory for the current theme
             temp_path = Path.home() / ".xfce-theme-studio" / "theme" / f"{current_theme_name}.temp"
-            dest_dir = temp_path / category.lower()  # Utiliser la catégorie passée
+            dest_dir = temp_path / category.lower()  # Use the passed category
             dest_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Obtenir le nom du fichier à remplacer
+
+            # Get the filename to replace
             dest_filename = Path(current_icon_path).name
             dest_full_path = dest_dir / dest_filename
             
-            # Copier le fichier
+            # Copy the file
             shutil.copy(source_path, dest_full_path)
             
-            # Marquer comme modifié
+            # Mark as modified
             import icon_modify
             icon_modify.modifications_en_cours = True
             
@@ -616,29 +723,56 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
 
     popup.show_all()
 
-# Barre d'action avec boutons de fenêtre
+# Action bar with window buttons
 toolbar = Gtk.HeaderBar()
 toolbar.set_show_close_button(True)
-toolbar.set_title("| Xfce Theme Studio -- Create and customize Icon theme |")
+toolbar.set_title("| Xfce Theme Studio -- Manage themes |")
 root.set_titlebar(toolbar)
 
 btn_new = Gtk.Button(label="New theme")
-btn_new.connect("clicked", lambda *args: create_theme_popup(root, theme_listbox))
+btn_new.connect("clicked", lambda *args: on_new_theme())
 toolbar.pack_start(btn_new)
 
 btn_delete = Gtk.Button(label="delete theme")
-btn_delete.connect("clicked", lambda *args: delete_theme_popup(root, theme_listbox))
+btn_delete.connect("clicked", lambda *args: on_delete_theme())
 toolbar.pack_start(btn_delete)
 
 btn_save = Gtk.Button(label="save")
-btn_save.connect("clicked", lambda *args: save_theme(theme_name))
+btn_save.connect("clicked", lambda *args: on_save_theme_action())
 toolbar.pack_start(btn_save)
 
 btn_reset = Gtk.Button(label="Reset changes")
-btn_reset.connect("clicked", lambda *args: reset_theme(theme_name))
+btn_reset.connect("clicked", lambda *args: on_reset_theme_action())
 toolbar.pack_start(btn_reset)
 
-# Wrapper vertical : contient main_frame (horizontal) + bottom_bar
+# Current state
+current_mode = "icons"
+
+mode_button = Gtk.Button(label="Icon themes")
+toolbar.pack_end(mode_button)
+
+def on_mode_switch(button):
+    global current_mode
+
+    if current_mode == "icons":
+        current_mode = "gtk"
+        button.set_label("GTK/XFWM4 themes")
+
+        # your code to display GTK/XFWM4
+        print("Mode GTK/XFWM4")
+
+    else:
+        current_mode = "icons"
+        button.set_label("Icon themes")
+
+        # your code to display icons
+        print("Mode Icon themes")
+    
+    update_mode_display()
+
+mode_button.connect("clicked", on_mode_switch)
+
+# Wrapper vertical : contient content_stack (horizontal) + bottom_bar
 root_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 root.add(root_vbox)
 
@@ -650,7 +784,7 @@ main_frame.set_margin_top(8)
 main_frame.set_margin_bottom(0)
 root_vbox.pack_start(main_frame, True, True, 0)
 
-# Liste des thèmes (gauche)
+# Theme list (left)
 left_frame = Gtk.Frame()
 left_frame.set_label("Custom themes")
 main_frame.pack_start(left_frame, False, False, 0)
@@ -677,7 +811,7 @@ scrolled_themes.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
 scrolled_themes.add(theme_listbox)
 left_box.pack_start(scrolled_themes, True, True, 0)
 
-# Zone de details du thème (droite)
+# Theme details area (right)
 right_frame = Gtk.Frame()
 right_frame.set_label("Theme details")
 main_frame.pack_end(right_frame, True, True, 0)
@@ -700,7 +834,28 @@ help_label.set_alignment(0, 0.5)
 help_label.set_opacity(0.7)
 right_box.pack_start(help_label, False, False, 6)
 
-# Onglets d'icônes par catégorie
+# Contenu selon le mode actif
+right_content_stack = Gtk.Stack()
+right_content_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+right_content_stack.set_transition_duration(200)
+right_box.pack_start(right_content_stack, True, True, 0)
+
+icon_content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+right_content_stack.add_titled(icon_content_box, "icon_page", "Icon page")
+
+gtk_details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=6)
+
+gtk_details_label = Gtk.Label(label="Select a GTK/XFWM4 theme to see details here.")
+gtk_details_label.set_alignment(0, 0)
+gtk_details_label.set_line_wrap(True)
+gtk_details_box.pack_start(gtk_details_label, False, False, 0)
+
+gtk_structure_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+gtk_details_box.pack_start(gtk_structure_box, True, True, 0)
+
+right_content_stack.add_titled(gtk_details_box, "gtk_page", "GTK page")
+
+# Icon tabs by category
 
 GRID_COLS = 6
 
@@ -735,7 +890,7 @@ class IconTab:
         self.main_frame = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.frame.pack_start(self.main_frame, True, True, 0)
 
-        # Frame icônes (scrolled window)
+        # Icons frame (scrolled window)
         self.content_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.content_frame.set_margin_end(6)
         
@@ -750,7 +905,7 @@ class IconTab:
         self.icons_container.set_column_spacing(6)
         self.scroll_canvas.add(self.icons_container)
 
-        # Preview intégré
+        # Embedded preview
         self.preview_frame = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.preview_frame.set_margin_start(6)
         self.main_frame.pack_end(self.preview_frame, False, False, 0)
@@ -765,7 +920,7 @@ class IconTab:
         self.large_preview.set_size_request(128, 128)
         self.preview_frame.pack_start(self.large_preview, False, False, 10)
 
-        self.large_preview_images = {}  # key = nom de l'icône
+        self.large_preview_images = {}  # key = icon name
 
         self.btn_change_image = Gtk.Button(label="Upload")
         self.btn_change_image.connect("clicked", lambda *args: self.on_upload_click())
@@ -793,7 +948,7 @@ class IconTab:
         self.search_var.connect("changed", self.refresh_icons)
         self.scroll_canvas.connect("size-allocate", self.on_resize)
 
-    # Les fonction essentiel à l'affichage des onglets
+    # Essential functions for displaying tabs
 
     def build_icons(self, theme_dirs):
         self.icon_items, self.icon_photo_refs = self.tab_click(
@@ -819,13 +974,13 @@ class IconTab:
         self.select_icon(cell, path, img, is_corrupted)
 
     def select_icon(self, cell, icon_id, icon_photo=None, is_corrupted=False):
-        # reset ancienne sélection
+        # reset previous selection
         if self.selected_icon_cell["cell"]:
             old_cell = self.selected_icon_cell["cell"]
             old_cell.set_state_flags(Gtk.StateFlags.NORMAL, True)
             old_cell.get_style_context().remove_class("icon-cell-selected")
         
-        # nouvelle sélection
+        # new selection
         self.selected_icon_cell["cell"] = cell
         cell.set_state_flags(Gtk.StateFlags.SELECTED, True)
         cell.get_style_context().add_class("icon-cell-selected")
@@ -843,23 +998,45 @@ class IconTab:
             self.large_preview.set_from_icon_name("image-missing", Gtk.IconSize.DIALOG)
 
     def on_resize(self, *args):
-        """Handler appelé à chaque modification de taille du canvas."""
+        """Handler appelé à chaque modification de taille du canvas.
+        Debounced: on ne reconstruit la grille qu'après 800 ms d'inactivité."""
         width = self.scroll_canvas.get_allocated_width()
         cell_size = 92  # largeur d'une cellule
         new_cols = max(1, width // cell_size)
 
+        # Si un job est déjà prévu et que la nouvelle cible est identique,
+        # il n'est pas nécessaire de reprogrammer la même action.
+        if self.resize_job.get("id") and self.resize_job.get("cols") == new_cols:
+            return
+
+        self.resize_job["cols"] = new_cols
+        try:
+            job_id = self.resize_job.get("id")
+            if job_id:
+                GLib.source_remove(job_id)
+        except Exception:
+            pass
+
+        self.resize_job["id"] = GLib.timeout_add(800, self._handle_resize)
+
+    def _handle_resize(self):
+        new_cols = self.resize_job.pop("cols", None)
+        self.resize_job["id"] = None
+        if new_cols is None:
+            width = self.scroll_canvas.get_allocated_width()
+            cell_size = 92
+            new_cols = max(1, width // cell_size)
+
         global GRID_COLS
         if new_cols == self.current_cols["value"]:
-            return  # pas besoin de changer
+            return False  # pas besoin de changer
 
         self.current_cols["value"] = new_cols
         if new_cols != 1:
             GRID_COLS = new_cols
 
-        # Choisir les paths à afficher
         paths = self.search_items if self.search_items else [item["path"] for item in self.icon_items]
 
-        # Rafraîchir les icônes
         new_items, _ = display_icon(
             self.icons_container,
             paths,
@@ -868,8 +1045,8 @@ class IconTab:
             GRID_COLS,
             lazy_loading=True
         )
-
-        print(f"RESIZE terminé : GRID_COLS={GRID_COLS}")
+        
+        return False
 
     def refresh_icons(self, *args):
         query = self.search_var.get_text().strip().lower()
@@ -903,14 +1080,14 @@ class IconTab:
 
         if chemin_selectionne and self.selected_icon_cell["cell"]:
             theme_name = self.current_theme_name
-            # 🔹 nom de l'icône à remplacer
+            # 🔹 name of the icon to replace
             icone_originale = self.current_icon_path
             
             dest_path = apply_new_icon(theme_name, self.category, chemin_selectionne, icone_originale)
             if dest_path:
                 refresh_icone_widget(self.large_preview, dest_path, self.load_image)
 
-                # mettre à jour la cellule dans la grille
+                # update the cell in the grid
             if self.selected_icon_cell["cell"]:
                 refresh_icon_cell(self.selected_icon_cell["cell"], dest_path, self.load_image)
 
@@ -952,12 +1129,12 @@ class IconTab:
         old_path = self.current_icon_path
         self.current_icon_path = new_path
 
-        # Mettre à jour la grille et l'aperçu immédiatement
+        # Update the grid and preview immediately
         if self.selected_icon_cell["cell"]:
             refresh_icon_cell(self.selected_icon_cell["cell"], new_path, self.load_image)
             refresh_icone_widget(self.large_preview, new_path, self.load_image)
 
-            # Réassigner le handler click pour pointer vers le nouveau chemin
+            # Reassign click handler to point to the new path
             for item in self.icon_items:
                 if item.get("cell") is self.selected_icon_cell["cell"]:
                     if item.get("handler_id") is not None:
@@ -979,18 +1156,18 @@ class IconTab:
         Met à jour self.icon_items pour remplacer old_path par new_path.
         Met aussi à jour self.search_items et la cellule sélectionnée si nécessaire.
         """
-        # Mettre à jour icon_items
+        # Update icon_items
         for item in self.icon_items:
             if item["path"] == old_path:
                 item["path"] = new_path
                 break
 
-        # Mettre à jour search_items si recherche active
+        # Update search_items if search active
         for i, path in enumerate(self.search_items):
             if path == old_path:
                 self.search_items[i] = new_path
 
-        # 🔹 Mettre à jour la cellule sélectionnée
+        # 🔹 Update the selected cell
         if self.selected_icon_cell.get("cell") and self.current_icon_path == old_path:
             self.current_icon_path = new_path
 
@@ -1021,7 +1198,7 @@ class IconTab:
 
 # --- Utilisation ---
 tab_parent = Gtk.Notebook()
-right_box.pack_start(tab_parent, True, True, 0)
+icon_content_box.pack_start(tab_parent, True, True, 0)
 
 categories = ["Apps", "Actions", "Places", "Status", "Devices", "Emblems"]
 
@@ -1029,7 +1206,7 @@ tabs = []
 for cat in categories:
     tabs.append(IconTab(tab_parent, cat, load_image, tab_click, action_inactive))
 
-# Onglet spécifique Mimetypes
+# Specific Mimetypes tab
 mime_frame = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
 mime_frame.set_margin_start(6)
 mime_frame.set_margin_end(6)
@@ -1173,14 +1350,14 @@ def on_mime_select(event):
         generic_names = list(dict.fromkeys(generic_names))
         
         icon_path = None
-        # Chercher d'abord dans le thème actuel et son héritage
+        # First search in current theme and its inheritance
         for theme_dir in theme_dirs:
             found = find_mimetype_icon(theme_dir, generic_names)
             if found:
                 icon_path = found
                 break
 
-        # Si pas trouvé, chercher ensuite dans tous les thèmes installés
+        # If not found, then search all installed themes
         if not icon_path:
             for candidate_theme in custom_themes + system_themes:
                 theme_group = get_theme_dirs_with_inheritance(candidate_theme)
@@ -1305,7 +1482,7 @@ def ask_unsaved_changes(root):
     dialog.run()
     return result["choice"]
 
-# Variable globale pour stocker le thème précédent
+# Global variable to store the previous theme
 previous_theme_name = None
 
 def on_theme_change(event):
@@ -1318,17 +1495,15 @@ def on_theme_change(event):
     if not treeiter:
         return
     
-    # Nouvelle sélection
+    # New selection
     new_theme_name = model.get_value(treeiter, 0)
     
-    # Vérifier les changements non sauvegardés
-    if has_unsaved_changes():
+    # Check unsaved changes only for icon mode
+    if is_icon_mode() and has_unsaved_changes():
         choice = ask_unsaved_changes(root)
 
         if choice == "cancel":
-            # Bloquer le signal pour éviter une boucle infinie
             selection.handler_block_by_func(on_theme_change)
-            # Réélectionner le thème précédent
             if previous_theme_name:
                 for i, row in enumerate(model):
                     if row[0] == previous_theme_name:
@@ -1340,18 +1515,21 @@ def on_theme_change(event):
             save_theme(theme_name)
         elif choice == "reset":
             reset_theme(theme_name)
-    
-    # Continuer normalement
+
     changeFalse()
     theme_name = new_theme_name
     previous_theme_name = new_theme_name
-    on_theme_select(None, theme_listbox, tabs, entry_name)
+    if is_icon_mode():
+        on_theme_select(None, theme_listbox, tabs, entry_name)
+    else:
+        on_gtk_theme_select(None, theme_listbox, entry_name, gtk_details_label, gtk_structure_box)
 
 theme_name = ""
-refresh_theme_listbox(theme_listbox)
+refresh_mode_theme_listbox()
 theme_listbox.get_selection().connect("changed", on_theme_change)
+update_mode_display()
 
-# Initialiser previous_theme_name avec le premier thème sélectionné
+# Initialize previous_theme_name with the first selected theme
 selection = theme_listbox.get_selection()
 if selection:
     model, treeiter = selection.get_selected()
@@ -1359,7 +1537,7 @@ if selection:
         previous_theme_name = model.get_value(treeiter, 0)
 
 def on_close(*args):
-    if has_unsaved_changes():
+    if is_icon_mode() and has_unsaved_changes():
         choice = ask_unsaved_changes(root)
 
         if choice == "cancel":
@@ -1375,5 +1553,6 @@ def on_close(*args):
 
 
 root.connect("delete-event", on_close)
+root.connect("destroy", Gtk.main_quit)
 root.show_all()
 Gtk.main()

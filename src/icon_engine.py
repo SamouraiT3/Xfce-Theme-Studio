@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from gi.repository import Gtk, GdkPixbuf, GLib
 
-# 🔹 1. Choisir meilleure icône
+# 🔹 1. Choose best icon
 def best_icon(file_list):
     best = None
     best_size = -1
@@ -29,12 +29,12 @@ def best_icon(file_list):
     return best if best else svg
 
 
-# 🔹 2. Scanner un thème pour une catégorie
+# 🔹 2. Scan a theme for a category
 def scan_category(theme_dir, category):
     icons = {}
 
     for root, dirs, files in os.walk(theme_dir):
-        # IMPORTANT : vérifier si le chemin contient la catégorie
+        # IMPORTANT: check if the path contains the category
         if category.lower() not in root.lower():
             continue
 
@@ -56,7 +56,7 @@ def scan_category(theme_dir, category):
     return result
 
 
-# 🔹 3. Lister toutes les icônes avec héritage
+# 🔹 3. List all icons with inheritance
 def list_icon(category, theme_dirs):
     final_icons = {}
 
@@ -70,7 +70,7 @@ def list_icon(category, theme_dirs):
     return list(final_icons.values())
 
 
-# 🔹 4. Affichage dans GTK
+# 🔹 4. Display in GTK
 def display_icon(container, paths, load_image, on_click, grid_cols=1, lazy_loading=False):
     # Clear existing children - Gtk.Grid uses foreach to iterate
     def remove_child(child):
@@ -199,7 +199,7 @@ def display_icon(container, paths, load_image, on_click, grid_cols=1, lazy_loadi
     return icon_items, photo_refs
 
 
-# 🔹 5. Clic onglet
+# 🔹 5. Tab click
 def tab_click(category, theme_dirs, container, load_image, on_click, grid_cols):
     paths = list_icon(category.lower(), theme_dirs)
     return display_icon(container, paths, load_image, on_click, grid_cols, lazy_loading=True)

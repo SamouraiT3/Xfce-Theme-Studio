@@ -1,7 +1,7 @@
 import subprocess
 from gi.repository import Gtk
 
-# Exécute la commande et récupère la sortie
+# Execute the command and capture the output
 cmd = "cat /usr/share/mime/globs"
 result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
 lines = result.stdout.strip().split("\n")
@@ -14,20 +14,20 @@ for line in lines:
     ext, mime = line.split(":", 1)
     mime_map.setdefault(mime, []).append(ext)
 
-# Prépare les données pour l'interface
-items = []  # liste des tuples (mime, texte_complet)
+# Prepare the data for the interface
+items = []  # list of tuples (mime, full_text)
 for mime, exts in sorted(mime_map.items()):
     texte = f"{mime}: {', '.join(exts)}"
-    # On garde toutes les lignes comme demandé, mais on montre uniquement le mime dans la listbox
+    # Keep all lines as requested, but show only the mime in the listbox
     items.append((mime, texte))
 
-# indices valides affichés actuellement
+# currently displayed valid indices
 displayed = []
 
 def refresh_list(listbox, search_var, selection=None, handler_id=None):
     query = search_var.get_text().strip().lower()
     
-    # Bloquer le signal changed pour éviter un crash si un item est sélectionné
+    # Block the changed signal to avoid a crash if an item is selected
     if selection and handler_id:
         selection.handler_block(handler_id)
 
