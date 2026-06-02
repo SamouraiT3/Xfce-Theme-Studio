@@ -16,6 +16,7 @@ from gtk_manage import (
     read_gtk_css_blocks,
     set_property_in_theme,
     get_gtk_css_paths,
+    _apply_units_on_save,
 )
 
 SYSTEM_PATH = "/usr/share/icons"
@@ -764,14 +765,12 @@ def parse_css_value(value):
         return value
 
     parts = re.split(r'\s+', value)
-    if len(parts) > 1 and all(re.match(r'^[-0-9.]+(px|pt|em|rem|%)?$', part) for part in parts):
-        return [clean_part(part) for part in parts]
     if len(parts) > 1:
-        return value
+        return [clean_part(part) for part in parts]
     return clean_part(parts[0])
 
 
-def create_property_widget(prop, prop_name, theme_path, inherited_value=None, double_parent=False):
+def create_property_widget(prop, prop_name, theme_path, inherited_value=None, double_parent=False, css_filename="gtk.css"):
 
     css_blocks = read_gtk_css_blocks(theme_path)
 
@@ -781,27 +780,56 @@ def create_property_widget(prop, prop_name, theme_path, inherited_value=None, do
     if inherited_value is not None:
         value = inherited_value
     else:
-        value = get_css_value(
-            css_blocks[f"{theme_path}/gtk-3.0/gtk.css"],
-            selector,
-            css_property
-        )
+        css_key = f"{theme_path}/gtk-3.0/{css_filename}"
+        if css_key in css_blocks:
+            value = get_css_value(
+                css_blocks[css_key],
+                selector,
+                css_property
+            )
+        else:
+            value = None
         value = parse_css_value(value)
-
-    if prop.get("type", "text").startswith("double-") and isinstance(value, list) and len(value) >= 2:
-        first_default, second_default = value[0], value[1]
-    else:
-        first_default = second_default = None
 
     prop_type = prop.get("type", "text")
 
-    print(f"Creating widget for {prop_name} with type {prop_type} and value {value}")
+    if isinstance(prop_type, list) and len(prop_type) >= 2:
+        defaults = prop.get("default")
+        values = value if isinstance(value, list) and len(value) >= len(prop_type) else None
+
+        container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for idx, child_type in enumerate(prop_type):
+            child_default = None
+            if values is not None:
+                child_default = values[idx]
+            elif isinstance(defaults, (list, tuple)) and len(defaults) > idx:
+                child_default = defaults[idx]
+            else:
+                child_default = defaults
+
+            child_prop = dict(prop, type=child_type, default=child_default)
+            container.pack_start(
+                create_property_widget(
+                    child_prop,
+                    prop_name,
+                    theme_path,
+                    inherited_value=child_default,
+                    double_parent=True,
+                    css_filename=css_filename,
+                ),
+                False,
+                False,
+                0,
+            )
+
+        return container
 
     if prop_type.startswith("double-"):
         base_type = prop_type[len("double-"):]
         defaults = prop.get("default")
-        if first_default is not None:
-            defaults = [first_default, second_default]
+
+        if isinstance(value, list) and len(value) >= 2:
+            defaults = [value[0], value[1]]
 
         first_default = None
         second_default = None
@@ -815,8 +843,8 @@ def create_property_widget(prop, prop_name, theme_path, inherited_value=None, do
         second_prop = dict(prop, type=base_type, default=second_default)
 
         container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        container.pack_start(create_property_widget(first_prop, prop_name, theme_path, inherited_value=first_default, double_parent=True), False, False, 0)
-        container.pack_start(create_property_widget(second_prop, prop_name, theme_path, inherited_value=second_default, double_parent=True), False, False, 0)
+        container.pack_start(create_property_widget(first_prop, prop_name, theme_path, inherited_value=first_default, double_parent=True, css_filename=css_filename), False, False, 0)
+        container.pack_start(create_property_widget(second_prop, prop_name, theme_path, inherited_value=second_default, double_parent=True, css_filename=css_filename), False, False, 0)
         return container
 
     widget = None
@@ -962,10 +990,17 @@ def create_property_widget(prop, prop_name, theme_path, inherited_value=None, do
 
             original_theme_dir = theme_path
             css_paths = get_gtk_css_paths(original_theme_dir)
-            if css_paths:
-                original_css = css_paths[0]
-            else:
-                original_css = os.path.join(original_theme_dir, 'gtk-3.0', 'gtk.css')
+            
+            # Find the CSS file matching css_filename
+            original_css = None
+            for css_path in css_paths:
+                if css_path.endswith(css_filename):
+                    original_css = css_path
+                    break
+            
+            # If not found, construct the path
+            if original_css is None:
+                original_css = os.path.join(original_theme_dir, 'gtk-3.0', css_filename)
 
             try:
                 set_property_in_theme(theme_name, original_css, selector, css_property, value_str)
@@ -993,14 +1028,12 @@ def create_property_widget(prop, prop_name, theme_path, inherited_value=None, do
     return widget
 
 
-def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
-    clear_container(container)
-
+def _build_css_tab_content(theme_path, css_filename, theme_structure=THEME_STRUCTURE):
+    """Build the content for a CSS tab (gtk.css or gtk-dark.css)."""
     scrolled = Gtk.ScrolledWindow()
     scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
     scrolled.set_hexpand(True)
     scrolled.set_vexpand(True)
-    container.pack_start(scrolled, True, True, 0)
 
     main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
     main_box.set_margin_start(8)
@@ -1044,7 +1077,7 @@ def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
                     controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
                     controls.set_halign(Gtk.Align.END)
                     try :
-                        widget = create_property_widget(prop_def, prop_name, theme_path)
+                        widget = create_property_widget(prop_def, prop_name, theme_path, css_filename=css_filename)
                     except Exception as e:
                         print(f"Error creating widget for {prop_name}: {e}")
                         widget = Gtk.Label(label="Error")
@@ -1075,7 +1108,7 @@ def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
                         controls = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
                         controls.set_halign(Gtk.Align.END)
                         try:
-                            widget = create_property_widget(prop_def, prop_name, theme_path)
+                            widget = create_property_widget(prop_def, prop_name, theme_path, css_filename=css_filename)
                         except Exception as e:
                             print(f"Error creating widget for {prop_name}: {e}")
                             widget = Gtk.Label(label="Error")
@@ -1094,6 +1127,38 @@ def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
                     state_label.set_xalign(0)
                     states_box.pack_start(state_label, False, False, 0)
                 widget_box.pack_start(states_box, False, False, 0)
+
+    scrolled.show_all()
+    return scrolled
+
+
+def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
+    clear_container(container)
+
+    # Create a notebook with 3 tabs
+    notebook = Gtk.Notebook()
+    notebook.set_hexpand(True)
+    notebook.set_vexpand(True)
+    container.pack_start(notebook, True, True, 0)
+
+    # Tab 1: Light Theme (gtk.css)
+    gtk_css_content = _build_css_tab_content(theme_path, "gtk.css", theme_structure)
+    tab1_label = Gtk.Label(label="Light Theme")
+    notebook.append_page(gtk_css_content, tab1_label)
+
+    # Tab 2: Dark Theme (gtk-dark.css)
+    gtk_dark_css_content = _build_css_tab_content(theme_path, "gtk-dark.css", theme_structure)
+    tab2_label = Gtk.Label(label="Dark Theme")
+    notebook.append_page(gtk_dark_css_content, tab2_label)
+
+    # Tab 3: Window Manager (xfwm4)
+    xfwm4_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
+    xfwm4_label = Gtk.Label()
+    xfwm4_label.set_markup("<i>Window Manager icons grid coming soon...</i>")
+    xfwm4_label.set_alignment(0.5, 0.5)
+    xfwm4_box.pack_start(xfwm4_label, True, True, 0)
+    tab3_label = Gtk.Label(label="Window Borders")
+    notebook.append_page(xfwm4_box, tab3_label)
 
     container.show_all()
 
@@ -1265,6 +1330,17 @@ def save_gtk_theme(theme_name):
         return f"No temporary changes to save for '{theme_name}'"
 
     try:
+        # normalize temporary GTK CSS files so units are applied before final save
+        temp_css_paths = get_gtk_css_paths(str(temp_path))
+        for temp_css_path in temp_css_paths:
+            try:
+                with open(temp_css_path, "r", encoding="utf-8") as f:
+                    css_text = f.read()
+                with open(temp_css_path, "w", encoding="utf-8") as f:
+                    f.write(_apply_units_on_save(css_text))
+            except Exception:
+                pass
+
         # copy, overwriting existing files
         for item in temp_path.rglob("*"):
             if item.is_file():

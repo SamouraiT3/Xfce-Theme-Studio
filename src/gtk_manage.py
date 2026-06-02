@@ -1,6 +1,8 @@
 import os
+import re
 import shutil
 from pathlib import Path
+from theme_structure import THEME_STRUCTURE
 
 GTK3_FOLDERS = ["gtk3", "gtk-3.0"]
 
@@ -568,11 +570,101 @@ def update_css_file(temp_css_path, selector, property_name, value):
     return temp_css_path
 
 
+def _apply_units_on_save(css_text):
+    parsed = parse_gtk_css(css_text)
+    if not parsed:
+        return css_text
+
+    unit_map = {}
+
+    def extract(struct):
+        if isinstance(struct, dict):
+            for key, value in struct.items():
+                if isinstance(value, dict):
+                    selector = value.get("selector")
+                    unit = value.get("unit")
+                    if selector and unit and "type" in value:
+                        unit_map.setdefault(selector, {})
+                        unit_map[selector][key] = unit
+                    extract(value)
+                elif isinstance(value, (dict, list)):
+                    extract(value)
+        elif isinstance(struct, list):
+            for item in struct:
+                extract(item)
+
+    extract(THEME_STRUCTURE)
+
+    def normalize_value(value, unit):
+        if not unit:
+            return value
+
+        parts = value.split()
+        numeric_pattern = re.compile(r'^-?\d+(?:\.\d+)?$')
+        unit_pattern = re.compile(r'^-?\d+(?:\.\d+)?' + re.escape(unit) + r'$')
+
+        normalized = []
+        i = 0
+        while i < len(parts):
+            token = parts[i]
+            if token == unit and i + 1 < len(parts) and numeric_pattern.match(parts[i + 1]):
+                normalized.append(parts[i + 1] + unit)
+                i += 2
+                continue
+            if numeric_pattern.match(token):
+                normalized.append(token + unit)
+            elif unit_pattern.match(token):
+                normalized.append(token)
+            elif token == unit:
+                if i + 1 < len(parts) and numeric_pattern.match(parts[i + 1]):
+                    normalized.append(parts[i + 1] + unit)
+                    i += 1
+                elif normalized:
+                    prev = normalized[-1]
+                    if numeric_pattern.match(prev) and not prev.endswith(unit):
+                        normalized[-1] = prev + unit
+                    elif not prev.endswith(unit):
+                        normalized.append(token)
+                else:
+                    normalized.append(token)
+            else:
+                normalized.append(token)
+            i += 1
+        return " ".join(normalized)
+
+    result = []
+    for block in parsed.get("blocks", []):
+        selector = block["selector"]
+        decls = block["declarations"].splitlines()
+        new_decls = []
+        for line in decls:
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            prop, val = line.split(":", 1)
+            prop = prop.strip()
+            val = val.strip().rstrip(";")
+            unit = unit_map.get(selector, {}).get(prop)
+            if unit:
+                val = normalize_value(val, unit)
+            new_decls.append(f"{prop}: {val};")
+        result.append(f"{selector} {{\n  " + "\n  ".join(new_decls) + "\n}")
+    return "\n\n".join(result) + "\n"
+
+
 def commit_temp_to_original(temp_css_path, original_css_path):
     """Copy the temp css back to the original location and remove the temp file.
 
     Attempts to remove the temp directory if it becomes empty.
     """
+    try:
+        with open(temp_css_path, "r", encoding="utf-8") as f:
+            css_text = f.read()
+        with open(temp_css_path, "w", encoding="utf-8") as f:
+            f.write(_apply_units_on_save(css_text))
+    except Exception:
+        pass
+
     shutil.copy2(temp_css_path, original_css_path)
 
     try:

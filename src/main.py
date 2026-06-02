@@ -10,6 +10,7 @@ import os
 import shutil
 import tarfile
 import webbrowser
+import sys
 
 from icon_engine import tab_click, display_icon, best_icon
 from theme_manage import (
@@ -29,15 +30,14 @@ from theme_manage import (
     delete_gtk_theme_popup,
     refresh_gtk_theme_listbox,
     on_gtk_theme_select,
-    build_gtk_theme_ui,
     save_gtk_theme,
     reset_gtk_theme,
     rename_gtk_theme,
     list_gtk_themes,
-    find_gtk_theme_path,
 )
 from icon_modify import apply_new_icon, refresh_icone_widget, refresh_icon_cell, has_unsaved_changes, changeFalse
 from mimetype_tab import refresh_list, items, displayed
+import update_manager
 
 # Main window
 root = Gtk.Window()
@@ -1552,7 +1552,48 @@ def on_close(*args):
     return False  # Permettre la fermeture
 
 
+def restart_application():
+    launcher = update_manager.DEFAULT_INSTALL / "xfce-theme-studio"
+    if launcher.exists():
+        os.execv(str(launcher), [str(launcher)])
+
+    python = sys.executable
+    os.execv(python, [python] + sys.argv)
+
+
+def check_for_update():
+    try:
+        latest = update_manager.fetch_latest_release(update_manager.DEFAULT_REPO)
+    except Exception:
+        return
+
+    current_version = update_manager.get_current_version()
+    if not update_manager.is_update_available(current_version, latest["tag"]):
+        return
+
+    local_label = current_version or "aucune version installée"
+    message = (
+        f"Version locale : {local_label}\n"
+        f"Version distante : {latest['tag']}\n"
+        "Voulez-vous mettre à jour l'application ?"
+    )
+
+    if messagebox_askyesno("Mise à jour disponible", message):
+        try:
+            install_dir = update_manager.get_update_target()
+            update_manager.perform_update(latest, install_dir=install_dir)
+            messagebox_showinfo(
+                "Mise à jour terminée",
+                f"L'application a été mise à jour vers {latest['tag']}\n" \
+                f"Emplacement : {install_dir}"
+            )
+            restart_application()
+        except Exception as exc:
+            messagebox_showerror("Erreur de mise à jour", str(exc))
+
+
 root.connect("delete-event", on_close)
 root.connect("destroy", Gtk.main_quit)
+check_for_update()
 root.show_all()
 Gtk.main()

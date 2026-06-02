@@ -1,7 +1,33 @@
 THEME_STRUCTURE = {
-    "interface": {
 
-        "Buttons config": {
+    "Windows (not the OS but the UI elements)": {
+        "Windows": {
+
+            "sections": {
+
+                "windows": {
+                    "background-color": {
+                        "label": "Window background color",
+                        "selector": "window",
+                        "type": "color",
+                        "default": "#ffffff"
+                    },
+
+                    "color": {
+                        "label": "Window text color",
+                        "selector": "window",
+                        "type": "color",
+                        "default": "#000000"
+                    }
+                }
+            }
+        }
+    },
+
+
+    "Buttons": {
+
+        "normal Buttons": {
 
             "sections": {
 
@@ -51,6 +77,27 @@ THEME_STRUCTURE = {
                         "step": 1,
                         "default": 20,
                         "unit": "px"
+                    }
+                },
+
+                "Button border": {
+
+                    "border": {
+                        "label": "Button border",
+                        "selector": "button",
+                        "type": ["int", "enum"],
+                        "min": 1,
+                        "max": 15,
+                        "default": [3, "solid"],
+                        "unit": "px",
+                        "options": ["solid", "dashed", "dotted"]
+                    },
+
+                    "border-color": {
+                        "label": "Button border color",
+                        "selector": "button",
+                        "type": "color",
+                        "default": "#3584e4"
                     },
 
                     "border-radius": {
@@ -62,22 +109,9 @@ THEME_STRUCTURE = {
                         "step": 1,
                         "default": 5,
                         "unit": "px"
-                    },
-
-                    "border-color": {
-                        "label": "Button border color",
-                        "selector": "button",
-                        "type": "color",
-                        "default": "#3584e4"
                     }
                 }
             }
         }
     }
 }
-
-"""
-min-width: 20px
-
-
-"""
