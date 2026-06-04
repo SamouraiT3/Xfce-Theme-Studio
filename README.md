@@ -67,7 +67,7 @@ An example structure is available in:
 
 ### Current version : 
 
-**v3.0**
+**v3.2.0**
 - Initial GTK theme customization support
 - Built-in installer
 - Theme editing improvements
