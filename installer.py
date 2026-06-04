@@ -226,7 +226,7 @@ def create_launcher(install_dir, entry):
 
     launcher.write_text(f"""#!/bin/bash
 cd "{install_dir}"
-"{py}" "{entry}"
+"{py}" "{entry}" "$@"
 """)
 
     launcher.chmod(0o755)
@@ -277,6 +277,52 @@ def install_system_icon(install_dir: Path, logbox):
 # DESKTOP GENERATION
 # =========================================================
 
+def register_xts_mime_type_installer(install_dir: Path, logbox):
+    """Register the .xts MIME type and set Xfce Theme Studio as the default application."""
+    xdg_data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    mime_packages_dir = xdg_data_home / "mime" / "packages"
+    mime_packages_dir.mkdir(parents=True, exist_ok=True)
+
+    mime_package_file = mime_packages_dir / "xfce-theme-studio-xts.xml"
+    mime_package_file.write_text(
+        """<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-xts">
+    <comment>Xfce Theme Studio project file</comment>
+    <glob pattern="*.xts"/>
+  </mime-type>
+</mime-info>
+""",
+        encoding="utf-8"
+    )
+
+    log(logbox, "Registering .xts MIME type...")
+
+    icon_dirs = [
+        xdg_data_home / "icons" / "hicolor" / "48x48" / "mimetypes",
+        xdg_data_home / "icons" / "hicolor" / "64x64" / "mimetypes",
+        xdg_data_home / "icons" / "hicolor" / "scalable" / "mimetypes",
+    ]
+
+    mime_icon_asset = Path(__file__).resolve().parent / "assets" / "mime_icon.png"
+    if mime_icon_asset.exists():
+        for icon_dir in icon_dirs:
+            icon_dir.mkdir(parents=True, exist_ok=True)
+            icon_target = icon_dir / "application-x-xts.png"
+            try:
+                shutil.copyfile(mime_icon_asset, icon_target)
+            except Exception as e:
+                log(logbox, f"Warning: Failed to copy MIME icon to {icon_target}: {e}")
+
+    mime_db_dir = xdg_data_home / "mime"
+    mime_db_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["update-mime-database", str(mime_db_dir)], check=False, capture_output=True)
+    subprocess.run(["gtk-update-icon-cache", "-f", "-t", str(xdg_data_home / "icons" / "hicolor")], check=False, capture_output=True)
+
+    subprocess.run(["xdg-mime", "default", "xfce-theme-studio.desktop", "application/x-xts"], check=False, capture_output=True)
+    log(logbox, "MIME type registration complete\n")
+
+
 def create_desktop_entry(install_dir: Path, logbox):
     desktop_dir = Path.home() / ".local/share/applications"
     desktop_dir.mkdir(parents=True, exist_ok=True)
@@ -286,11 +332,12 @@ Version=1.0
 Type=Application
 Name=Xfce Theme Studio
 Comment=Theme manager for XFCE
-Exec={install_dir / "xfce-theme-studio"}
+Exec={install_dir / "xfce-theme-studio"} %f
 Path={install_dir}
 Icon=xfce-theme-studio
 Terminal=false
 Categories=Utility;System;Settings;
+MimeType=application/x-xts;
 """
 
     desktop_file = desktop_dir / "xfce-theme-studio.desktop"
@@ -351,6 +398,8 @@ def install_app(install_dir, release, logbox):
         install_system_icon(install_dir, logbox)
 
         create_desktop_entry(install_dir, logbox)
+
+        register_xts_mime_type_installer(install_dir, logbox)
 
         log(logbox, "INSTALL COMPLETE")
 

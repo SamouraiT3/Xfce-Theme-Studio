@@ -21,6 +21,7 @@ from gtk_manage import (
 
 SYSTEM_PATH = "/usr/share/icons"
 USER_PATH = os.path.expanduser("~/.local/share/icons")
+FLATPAK_PATH = os.path.expanduser("/var/lib/flatpak/exports/share/icons/")
 GTK_SYSTEM_PATH = "/usr/share/themes"
 GTK_USER_PATH = os.path.expanduser("~/.themes")
 CATEGORIES = ["apps", "places", "devices", "actions", "status", "mimetypes"]
@@ -65,11 +66,14 @@ def get_theme_dirs_with_inheritance(theme_name):
         visited.add(current)
         dirs.append(os.path.join(USER_PATH, current))
         dirs.append(os.path.join(SYSTEM_PATH, current))
+        dirs.append(os.path.join(FLATPAK_PATH, current))
         
         # Read index.theme for Inherits
         index_path = os.path.join(USER_PATH, current, "index.theme")
         if not os.path.exists(index_path):
             index_path = os.path.join(SYSTEM_PATH, current, "index.theme")
+            if not os.path.exists(index_path):
+                index_path = os.path.join(FLATPAK_PATH, current, "index.theme")
         
         if os.path.exists(index_path):
             config = configparser.ConfigParser()
@@ -640,7 +644,7 @@ def create_gtk_theme_popup(parent, theme_listbox):
         if val in custom:
             name_entry.set_text(f"{val}-copy")
         else:
-            name_entry.set_text(f"{val}-gtk")
+            name_entry.set_text(f"{val}-custom")
 
     selection = listbox.get_selection()
     selection.connect("changed", on_select)

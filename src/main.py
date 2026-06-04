@@ -35,7 +35,7 @@ from theme_manage import (
     rename_gtk_theme,
     list_gtk_themes,
 )
-from icon_modify import apply_new_icon, refresh_icone_widget, refresh_icon_cell, has_unsaved_changes, changeFalse
+from icon_modify import apply_new_icon, refresh_icone_widget, refresh_icon_cell, has_unsaved_changes, changeFalse, modifications_en_cours
 from mimetype_tab import refresh_list, items, displayed
 import update_manager
 
@@ -150,6 +150,29 @@ def messagebox_askyesno(title, message):
 
 current_mode = "icons"
 
+# on defnis askstring
+def askstring(title, message, default=""):
+    dialog = Gtk.Dialog(title, root, 0, (Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OK, Gtk.ResponseType.OK))
+    dialog.set_default_size(300, 100)
+
+    box = dialog.get_content_area()
+    label = Gtk.Label(label=message)
+    entry = Gtk.Entry()
+    entry.set_text(default)
+
+    box.pack_start(label, True, True, 5)
+    box.pack_start(entry, True, True, 5)
+    dialog.show_all()
+
+    response = dialog.run()
+    text = entry.get_text()
+    dialog.destroy()
+
+    if response == Gtk.ResponseType.OK:
+        return text
+    else:
+        return None
+
 
 def is_icon_mode():
     return current_mode == "icons"
@@ -219,8 +242,146 @@ def on_mode_switch(combo):
     update_mode_display()
 
 
+def get_downloads_dir():
+    """Get the user's Downloads directory using XDG standards."""
+    try:
+        result = subprocess.run(['xdg-user-dir', 'DOWNLOAD'], capture_output=True, text=True, check=False)
+        downloads_dir = result.stdout.strip()
+        if downloads_dir and os.path.isdir(downloads_dir):
+            return downloads_dir
+    except Exception:
+        pass
+    
+    # Fallback to common locations
+    fallback_dirs = [
+        os.path.expanduser("~/Downloads"),
+        os.path.expanduser("~/Téléchargements"),
+        os.path.expanduser("~/Download"),
+    ]
+    
+    for fallback_dir in fallback_dirs:
+        if os.path.isdir(fallback_dir):
+            return fallback_dir
+    
+    # Create and return ~/Downloads if nothing else works
+    downloads_dir = os.path.expanduser("~/Downloads")
+    os.makedirs(downloads_dir, exist_ok=True)
+    return downloads_dir
+
+
+def import_theme_from_file(file_path, silent=False):
+    """Import a theme from a specific file. Returns True on success, False on failure."""
+    if not os.path.isfile(file_path):
+        if not silent:
+            messagebox_showerror("Error", f"File not found: {file_path}")
+        return False
+    
+    if not file_path.lower().endswith(('.tar.gz', '.tgz', '.zip', '.xts')):
+        if not silent:
+            messagebox_showerror("Error", "Unsupported file format. Please select a .xts, .tar.gz, .zip file.")
+        return False
+    
+    import tempfile
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract_dir = os.path.join(temp_dir, "extracted")
+        os.makedirs(extract_dir)
+        
+        try:
+            if file_path.lower().endswith('.zip'):
+                import zipfile
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+            else:
+                with tarfile.open(file_path, 'r:gz') as tar_ref:
+                    tar_ref.extractall(extract_dir)
+            
+            # Check for metadata file
+            metadata_file = os.path.join(extract_dir, '.theme-info')
+            theme_type = None  # 'icons' or 'gtk'
+            theme_name = None
+            
+            if os.path.isfile(metadata_file):
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = {}
+                        for line in f:
+                            if '=' in line:
+                                key, val = line.strip().split('=', 1)
+                                metadata[key] = val
+                        theme_name = metadata.get('name')
+                        theme_type = metadata.get('type')  # 'icons' or 'gtk'
+                except Exception:
+                    theme_type = None
+            
+            if not theme_type:
+                # Try to infer from directory structure
+                extracted_items = os.listdir(extract_dir)
+                extracted_items = [item for item in extracted_items if item != '.theme-info']
+                
+                if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_dir, extracted_items[0])):
+                    theme_source_dir = os.path.join(extract_dir, extracted_items[0])
+                    if not theme_name:
+                        theme_name = extracted_items[0]
+                    # Infer type from structure
+                    theme_files = os.listdir(theme_source_dir)
+                    if any(f in theme_files for f in ['index.theme', 'mimetypes', 'places', 'apps', 'actions']):
+                        theme_type = 'icons'
+                    else:
+                        theme_type = 'gtk'
+                else:
+                    # Multiple items or files
+                    file_name = os.path.basename(file_path)
+                    if file_name.lower().endswith('.tar.gz'):
+                        theme_name = os.path.splitext(os.path.splitext(file_name)[0])[0]
+                    else:
+                        theme_name = os.path.splitext(file_name)[0]
+                    theme_source_dir = extract_dir
+                    theme_type = 'icons' if is_icon_mode() else 'gtk'
+            else:
+                # Use metadata to find theme dir
+                extracted_items = os.listdir(extract_dir)
+                extracted_items = [item for item in extracted_items if item != '.theme-info']
+                if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_dir, extracted_items[0])):
+                    theme_source_dir = os.path.join(extract_dir, extracted_items[0])
+                else:
+                    theme_source_dir = extract_dir
+            
+            # Copy to appropriate user themes location
+            if theme_type == 'icons':
+                system, custom = list_themes()
+                dest = os.path.join(USER_PATH, theme_name)
+            else:
+                system, custom = list_gtk_themes()
+                dest = os.path.join(os.path.expanduser("~/.themes"), theme_name)
+            
+            if theme_name in system or theme_name in custom:
+                if not silent:
+                    overwrite = messagebox_askyesno(
+                        "Overwrite theme?",
+                        f"The theme '{theme_name}' already exists. Overwrite?"
+                    )
+                    if not overwrite:
+                        return False
+                else:
+                    # In silent mode, skip existing themes
+                    return False
+                shutil.rmtree(dest, ignore_errors=True)
+            
+            shutil.copytree(theme_source_dir, dest, dirs_exist_ok=True)
+            if not silent:
+                messagebox_showinfo("Success", f"Theme '{theme_name}' imported from archive")
+            refresh_mode_theme_listbox()
+            return True
+            
+        except Exception as e:
+            if not silent:
+                messagebox_showerror("Error", f"Failed to import theme: {e}")
+            return False
+
+
 def import_theme():
-    zenity_cmd = ['zenity', '--file-selection', '--title=Import Theme', '--file-filter=Themes | *.tar.gz *.zip']
+    downloads_dir = get_downloads_dir()
+    zenity_cmd = ['zenity', '--file-selection', '--title=Import Theme', '--file-filter=Themes | *.xts *.tar.gz *.zip', '--filename=' + downloads_dir + '/']
     env = os.environ.copy()
     env['DISPLAY'] = os.environ.get('DISPLAY', ':0')
     
@@ -236,62 +397,11 @@ def import_theme():
     if not selected_path:
         return
 
-    # Determine if it's a file or directory
+    # Use the generic import function
     if os.path.isfile(selected_path):
-        # Handle archive import
-        if selected_path.lower().endswith(('.tar.gz', '.tgz', '.zip')):
-            # Extract archive to temp directory first
-            import tempfile
-            with tempfile.TemporaryDirectory() as temp_dir:
-                extract_dir = os.path.join(temp_dir, "extracted")
-                os.makedirs(extract_dir)
-                
-                try:
-                    if selected_path.lower().endswith('.zip'):
-                        import zipfile
-                        with zipfile.ZipFile(selected_path, 'r') as zip_ref:
-                            zip_ref.extractall(extract_dir)
-                    else:
-                        with tarfile.open(selected_path, 'r:gz') as tar_ref:
-                            tar_ref.extractall(extract_dir)
-                    
-                    # Find the theme directory (should be the only directory in extract_dir)
-                    extracted_items = os.listdir(extract_dir)
-                    if len(extracted_items) == 1 and os.path.isdir(os.path.join(extract_dir, extracted_items[0])):
-                        theme_source_dir = os.path.join(extract_dir, extracted_items[0])
-                        theme_name = extracted_items[0]
-                    else:
-                        # Multiple items or files, use the archive name without extension
-                        theme_name = os.path.splitext(os.path.splitext(os.path.basename(selected_path))[0])[0]
-                        theme_source_dir = extract_dir
-                    
-                    # Copy to user themes
-                    if is_icon_mode():
-                        system, custom = list_themes()
-                        dest = os.path.join(USER_PATH, theme_name)
-                    else:
-                        system, custom = list_gtk_themes()
-                        dest = os.path.join(os.path.expanduser("~/.themes"), theme_name)
-                    
-                    if theme_name in system or theme_name in custom:
-                        overwrite = messagebox_askyesno(
-                            "Overwrite theme?",
-                            f"The theme '{theme_name}' already exists. Overwrite?"
-                        )
-                        if not overwrite:
-                            return
-                        shutil.rmtree(dest, ignore_errors=True)
-                    
-                    shutil.copytree(theme_source_dir, dest, dirs_exist_ok=True)
-                    messagebox_showinfo("Success", f"Theme '{theme_name}' imported from archive")
-                    refresh_mode_theme_listbox()
-                    
-                except Exception as e:
-                    messagebox_showerror("Error", f"Failed to extract archive: {e}")
-        else:
-            messagebox_showerror("Error", "Unsupported file format. Please select a .tar.gz, .zip file or a theme directory.")
-    else:
-        # Handle directory import (existing code)
+        import_theme_from_file(selected_path, silent=False)
+    elif os.path.isdir(selected_path):
+        # Handle directory import
         theme_name = os.path.basename(os.path.normpath(selected_path))
         if is_icon_mode():
             system, custom = list_themes()
@@ -327,23 +437,109 @@ def export_theme():
         messagebox_showerror("Error", "Theme folder not found")
         return
 
-    zenity_cmd = ['zenity', '--file-selection', '--save', '--title=Export Theme', '--filename=' + f"{theme_name}.tar.gz"]
+    downloads_dir = get_downloads_dir()
+    
+    zenity_cmd = ['zenity', '--file-selection', '--save', '--title=Export Theme', '--filename=' + os.path.join(downloads_dir, f"{theme_name}.xts")]
     result = subprocess.run(zenity_cmd, capture_output=True, text=True)
     target_file = result.stdout.strip()
     
     if not target_file:
         return
 
-    # Add .tar.gz extension if not present
-    if not target_file.lower().endswith(('.tar.gz', '.tgz')):
-        target_file += '.tar.gz'
+    # Add .xts extension if not present
+    if not target_file.lower().endswith('.xts'):
+        target_file += '.xts'
 
     try:
-        with tarfile.open(target_file, "w:gz") as tar:
-            tar.add(source_dir, arcname=os.path.basename(source_dir))
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_extract = os.path.join(temp_dir, "archive_content")
+            os.makedirs(temp_extract)
+            
+            # Copy theme to temp location
+            temp_theme = os.path.join(temp_extract, os.path.basename(source_dir))
+            shutil.copytree(source_dir, temp_theme)
+            
+            # Create metadata file
+            theme_type = 'icons' if is_icon_mode() else 'gtk'
+            metadata_file = os.path.join(temp_extract, '.theme-info')
+            with open(metadata_file, 'w') as f:
+                f.write(f"name={theme_name}\n")
+                f.write(f"type={theme_type}\n")
+            
+            # Create archive with metadata and theme
+            with tarfile.open(target_file, "w:gz") as tar:
+                tar.add(temp_extract, arcname='.')
+        
         messagebox_showinfo("Success", f"Theme exported to {target_file}")
     except Exception as e:
         messagebox_showerror("Error", f"Export failed: {e}")
+
+def get_theme_archive_info(file_path):
+    """
+    Retourne (theme_name, theme_type) ou (None, None) si impossible.
+    Les types acceptés sont uniquement 'icons' et 'gtk'.
+    """
+    if not os.path.isfile(file_path):
+        return None, None
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        extract_dir = os.path.join(temp_dir, "extract")
+        os.makedirs(extract_dir)
+
+        try:
+            if file_path.lower().endswith(".zip"):
+                import zipfile
+                with zipfile.ZipFile(file_path, "r") as zip_ref:
+                    zip_ref.extractall(extract_dir)
+            else:
+                with tarfile.open(file_path, "r:gz") as tar_ref:
+                    tar_ref.extractall(extract_dir)
+
+            metadata_file = os.path.join(extract_dir, ".theme-info")
+
+            if os.path.isfile(metadata_file):
+                metadata = {}
+
+                with open(metadata_file, "r") as f:
+                    for line in f:
+                        if "=" in line:
+                            key, value = line.strip().split("=", 1)
+                            metadata[key] = value
+
+                theme_name = metadata.get("name")
+                theme_type = metadata.get("type")
+
+                if theme_type not in ("icons", "gtk"):
+                    return None, None
+
+                return theme_name, theme_type
+
+            return None, None
+
+        except Exception:
+            return None, None
+        
+def ask_import_theme(file_path):
+    theme_name, theme_type = get_theme_archive_info(file_path)
+
+    if not theme_name or theme_type not in ("icons", "gtk"):
+        messagebox_showerror(
+            "Import impossible",
+            "Le fichier ne contient pas de métadonnées valides.\n"
+            "Type accepté : icons ou gtk."
+        )
+        return False
+
+    return messagebox_askyesno(
+        "Importer le thème",
+        f"Nom : {theme_name}\n"
+        f"Type : {theme_type}\n\n"
+        f"Voulez-vous importer ce thème ?"
+    )
+
 
 def rename_theme_entry(event=None):
     global theme_name
@@ -886,6 +1082,18 @@ class IconTab:
         self.search_var.set_width_chars(30)
         search_holder.pack_start(self.search_var, False, False, 4)
 
+        # Bouton add (+) pour ajouter une icône personnalisée juste à coté de la barre de recherche
+        self.btn_add_icon = Gtk.Button(label="+")
+        self.btn_add_icon.set_tooltip_text("Add a custom icon for this category")
+        self.btn_add_icon.connect("clicked", lambda *args: self.on_add_icon_click())
+        search_holder.pack_start(self.btn_add_icon, False, False, 0)
+
+        # Bouton remove (-) pour supprimer l'icône personnalisée sélectionnée si présent uniquement dans le dossier temporaire ou si elle est déjà présente dans le thème d'origine (permet de revenir à l'icône d'origine)
+        self.btn_remove_icon = Gtk.Button(label="-")
+        self.btn_remove_icon.set_tooltip_text("Remove the custom icon and revert to the original one")
+        self.btn_remove_icon.connect("clicked", lambda *args: self.on_remove_icon_click())
+        search_holder.pack_start(self.btn_remove_icon, False, False, 0)
+
         # Frame principale avec icons + preview
         self.main_frame = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.frame.pack_start(self.main_frame, True, True, 0)
@@ -949,6 +1157,109 @@ class IconTab:
         self.scroll_canvas.connect("size-allocate", self.on_resize)
 
     # Essential functions for displaying tabs
+
+    def on_add_icon_click(self):
+        if not self.current_theme_name:
+            messagebox_showerror("Error", "Select a theme first")
+            return
+
+        # Ask for the new icon name
+        dialog = Gtk.Dialog(title="Add custom icon", transient_for=root, modal=True)
+        dialog.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("Add", Gtk.ResponseType.OK)
+
+        content_area = dialog.get_content_area()
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("Enter the new icon name (without extension)")
+        content_area.pack_start(entry, True, True, 10)
+        entry.show()
+
+        response = dialog.run()
+        icon_name = entry.get_text().strip()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.OK and icon_name:
+            existing_paths = [item["path"] for item in self.icon_items]
+            if any(Path(path).stem == icon_name for path in existing_paths):
+                messagebox_showerror("Error", f"An icon named '{icon_name}' already exists in this theme.")
+                return
+
+            try:
+
+                zenity_cmd = ['zenity', '--file-selection', '--title=Select icon for ' + icon_name, '--file-filter=Images | *.png *.svg *.xpm', '--filename=' + get_downloads_dir() + '/']
+                result = subprocess.run(zenity_cmd, capture_output=True, text=True)
+                selected_path = result.stdout.strip()
+
+                if selected_path:
+                    # on copie l'icone dans le dossier temporaire avec le nom choisi et l'extension d'origine
+                    ext = Path(selected_path).suffix
+                    dest_dir = Path.home() / ".xfce-theme-studio" / "theme" / f"{self.current_theme_name}.temp" / self.category.lower()
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    dest_path = dest_dir / f"{icon_name}{ext}"
+                    shutil.copy(selected_path, dest_path)
+                    messagebox_showinfo("Success", f"Custom icon added: {dest_path.name}")
+
+                global theme_dirs, modifications_en_cours
+                theme_dirs = get_theme_dirs_with_inheritance(self.current_theme_name)
+                self.icon_items, self.icon_photo_refs = self.tab_click(
+                    self.category,
+                    theme_dirs,
+                    self.icons_container,
+                    self.load_image,
+                    self.on_click,
+                    GRID_COLS
+                )
+                
+                self.refresh_icons()
+                modifications_en_cours = True
+
+            except Exception as e:
+                messagebox_showerror("Error", f"Failed to create custom icon: {e}")
+
+    
+    def on_remove_icon_click(self):
+        if not self.current_theme_name:
+            messagebox_showerror("Error", "Select a theme first")
+            return
+
+        if not self.selected_icon_cell["cell"]:
+            messagebox_showerror("Error", "Select an icon first")
+            return
+
+        icon_path = self.current_icon_path
+        if not icon_path:
+            messagebox_showerror("Error", "No icon selected")
+            return
+
+        try:
+            # on évite que le dossier commence par "/usr/share/icons"
+
+            if icon_path.startswith("/usr/share/icons"):
+                messagebox_showerror("Error", "Cannot remove system icons")
+                return
+            temp_icon_path = Path.home() / ".xfce-theme-studio" / "theme" / f"{self.current_theme_name}.temp" / icon_path
+            if temp_icon_path.exists():
+                temp_icon_path.unlink()
+                messagebox_showinfo("Success", f"Custom icon removed: {icon_path}")
+            else:
+                messagebox_showinfo("Info", f"No custom icon to remove for: {icon_path}")
+
+            global theme_dirs, modifications_en_cours
+            theme_dirs = get_theme_dirs_with_inheritance(self.current_theme_name)
+            self.icon_items, self.icon_photo_refs = self.tab_click(
+                self.category,
+                theme_dirs,
+                self.icons_container,
+                self.load_image,
+                self.on_click,
+                GRID_COLS
+            )
+            
+            self.refresh_icons()
+            modifications_en_cours = True
+
+        except Exception as e:
+            messagebox_showerror("Error", f"Failed to remove custom icon: {e}")
 
     def build_icons(self, theme_dirs):
         self.icon_items, self.icon_photo_refs = self.tab_click(
@@ -1594,6 +1905,47 @@ def check_for_update():
 
 root.connect("delete-event", on_close)
 root.connect("destroy", Gtk.main_quit)
+
+
+def verify_startup_installation():
+    install_dir = update_manager.get_update_target()
+    if update_manager.is_installation_complete(install_dir):
+        return
+
+    messagebox_showinfo(
+        "Mise à jour nécessaire",
+        "Certaines parties de l'installation sont manquantes.\n" \
+        "Une mise à jour complète va être effectuée pour rétablir les éléments manquants."
+    )
+
+    try:
+        latest = update_manager.fetch_latest_release(update_manager.DEFAULT_REPO)
+        update_manager.perform_update(latest, install_dir=install_dir)
+        messagebox_showinfo(
+            "Réinstallation terminée",
+            "L'installation a été rétablie avec les éléments manquants."
+        )
+        restart_application()
+    except Exception as exc:
+        messagebox_showerror("Erreur de réinstallation", str(exc))
+
+
+verify_startup_installation()
+
+
+if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
+    file_path = sys.argv[1]
+
+    if file_path.lower().endswith('.xts'):
+
+        def ask_import_on_startup():
+            if ask_import_theme(file_path):
+                import_theme_from_file(file_path)
+
+            return False
+
+        GLib.idle_add(ask_import_on_startup)
+
 check_for_update()
 root.show_all()
 Gtk.main()

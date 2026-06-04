@@ -13,6 +13,15 @@ DEFAULT_REPO = "https://github.com/SamouraiT3/Xfce-Theme-Studio"
 DEFAULT_INSTALL = Path.home() / ".xfce-theme-studio"
 GITHUB_API = "https://api.github.com/repos"
 
+XDG_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+MIME_PACKAGE_FILENAME = "xfce-theme-studio-xts.xml"
+MIME_TYPE = "application/x-xts"
+MIME_COMMENT = "Xfce Theme Studio project file"
+MIME_GLOB = "*.xts"
+MIME_ICON_NAME = "application-x-xts"
+MIME_ICON_ASSET = Path(__file__).resolve().parents[1] / "assets" / "mime_icon.png"
+DESKTOP_FILE_NAME = "xfce-theme-studio.desktop"
+
 PYTHON_BIN = shutil.which("python3.12") or shutil.which("python3") or "python3"
 PYTHON_DEPS = ["Pillow", "cairosvg"]
 
@@ -134,7 +143,7 @@ def create_launcher(install_dir, entry_file):
     python_bin = install_dir / "venv/bin/python"
     launcher.write_text(f"""#!/bin/bash
 cd \"{install_dir}\"
-\"{python_bin}\" \"{entry_file}\"
+\"{python_bin}\" \"{entry_file}\" "$@"
 """)
     launcher.chmod(0o755)
 
@@ -142,20 +151,67 @@ cd \"{install_dir}\"
 def create_desktop_entry(install_dir):
     desktop_dir = Path.home() / ".local/share/applications"
     desktop_dir.mkdir(parents=True, exist_ok=True)
-    desktop_file = desktop_dir / "xfce-theme-studio.desktop"
+    desktop_file = desktop_dir / DESKTOP_FILE_NAME
     desktop_content = f"""[Desktop Entry]
 Version=1.0
 Type=Application
 Name=Xfce Theme Studio
 Comment=Theme manager for XFCE
-Exec={install_dir / 'xfce-theme-studio'}
+Exec={install_dir / 'xfce-theme-studio'} %f
 Path={install_dir}
 Icon=xfce-theme-studio
 Terminal=false
 Categories=Utility;System;Settings;
+MimeType={MIME_TYPE};
 """
     desktop_file.write_text(desktop_content, encoding="utf-8")
     desktop_file.chmod(0o644)
+
+
+def register_xts_mime_type(install_dir=None):
+    """Register the .xts MIME type and set Xfce Theme Studio as the default application."""
+    if install_dir is None:
+        install_dir = DEFAULT_INSTALL
+
+    mime_packages_dir = XDG_DATA_HOME / "mime" / "packages"
+    mime_packages_dir.mkdir(parents=True, exist_ok=True)
+
+    mime_package_file = mime_packages_dir / MIME_PACKAGE_FILENAME
+    mime_package_file.write_text(
+        f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<mime-info xmlns=\"http://www.freedesktop.org/standards/shared-mime-info\">
+  <mime-type type=\"{MIME_TYPE}\">
+    <comment>{MIME_COMMENT}</comment>
+    <glob pattern=\"{MIME_GLOB}\"/>
+  </mime-type>
+</mime-info>
+""",
+        encoding="utf-8"
+    )
+
+    icon_dirs = [
+        XDG_DATA_HOME / "icons" / "hicolor" / "48x48" / "mimetypes",
+        XDG_DATA_HOME / "icons" / "hicolor" / "64x64" / "mimetypes",
+        XDG_DATA_HOME / "icons" / "hicolor" / "scalable" / "mimetypes",
+    ]
+
+    if MIME_ICON_ASSET.exists():
+        for icon_dir in icon_dirs:
+            icon_dir.mkdir(parents=True, exist_ok=True)
+            icon_target = icon_dir / f"{MIME_ICON_NAME}.png"
+            shutil.copyfile(MIME_ICON_ASSET, icon_target)
+
+    mime_db_dir = XDG_DATA_HOME / "mime"
+    mime_db_dir.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["update-mime-database", str(mime_db_dir)], check=False, capture_output=True)
+    subprocess.run(["gtk-update-icon-cache", "-f", "-t", str(XDG_DATA_HOME / "icons" / "hicolor")], check=False, capture_output=True)
+
+    create_desktop_entry(install_dir)
+    desktop_file = Path.home() / ".local/share/applications" / DESKTOP_FILE_NAME
+    if desktop_file.exists():
+        subprocess.run(["xdg-mime", "default", DESKTOP_FILE_NAME, MIME_TYPE], check=False, capture_output=True)
+
+    return mime_package_file.exists()
 
 
 def perform_update(release, install_dir=None):
@@ -186,5 +242,37 @@ def perform_update(release, install_dir=None):
         entry_file = find_entry(app_dir)
         create_launcher(install_dir, entry_file)
         create_desktop_entry(install_dir)
+        register_xts_mime_type(install_dir)
 
     return install_dir
+
+
+def is_installation_complete(install_dir=None):
+    install_dir = Path(install_dir or DEFAULT_INSTALL)
+    launcher = install_dir / "xfce-theme-studio"
+    desktop_file = Path.home() / ".local/share/applications" / DESKTOP_FILE_NAME
+    mime_package_file = XDG_DATA_HOME / "mime" / "packages" / MIME_PACKAGE_FILENAME
+    icon_file = XDG_DATA_HOME / "icons" / "hicolor" / "48x48" / "mimetypes" / f"{MIME_ICON_NAME}.png"
+    return (
+        install_dir.exists()
+        and (install_dir / "app").exists()
+        and (install_dir / "venv").exists()
+        and launcher.exists()
+        and launcher.is_file()
+        and os.access(str(launcher), os.X_OK)
+        and desktop_file.exists()
+        and mime_package_file.exists()
+        and icon_file.exists()
+    )
+
+
+def ensure_installation(install_dir=None):
+    install_dir = Path(install_dir or DEFAULT_INSTALL)
+    if is_installation_complete(install_dir):
+        return True
+    try:
+        latest = fetch_latest_release(DEFAULT_REPO)
+        perform_update(latest, install_dir=install_dir)
+    except Exception:
+        return False
+    return is_installation_complete(install_dir)
