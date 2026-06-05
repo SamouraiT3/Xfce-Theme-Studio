@@ -1746,6 +1746,11 @@ btn_help = Gtk.Button(label="Help")
 btn_help.connect("clicked", lambda *args: show_help())
 bottom_bar.pack_end(btn_help)
 
+# on affiche le numéro de version dans la barre du bas à gauche
+version_label = Gtk.Label(label=f"{update_manager.get_current_version() or 'unknown'}")
+version_label.set_opacity(0.5)
+bottom_bar.pack_start(version_label)
+
 # popup de sauvegarde
 
 def ask_unsaved_changes(root):

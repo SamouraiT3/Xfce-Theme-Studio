@@ -43,7 +43,14 @@ def compare_versions(a, b):
 
 def read_installed_version(path: Path):
     version_file = path / ".version"
-    return version_file.read_text().strip() if version_file.exists() else None
+
+    if not version_file.exists():
+        return None
+
+    try:
+        return version_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
 
 
 def parse_repo(url):
@@ -51,7 +58,13 @@ def parse_repo(url):
     url = url.replace("https://github.com/", "")
     url = url.replace("http://github.com/", "")
     url = url.replace("github.com/", "")
-    owner, repo = url.strip("/").split("/")[:2]
+
+    parts = url.strip("/").split("/")
+
+    if len(parts) < 2:
+        raise ValueError(f"Invalid GitHub repository URL: {url}")
+
+    owner, repo = parts[:2]
     return owner, repo
 
 
@@ -100,15 +113,26 @@ def find_entry(folder):
     for file_path in folder.rglob("*.py"):
         if "venv" in file_path.parts:
             continue
+
         if file_path.name in ["main.py", "app.py", "run.py"]:
             return file_path
 
     for file_path in folder.rglob("*.py"):
-        text = file_path.read_text(errors="ignore")
+        try:
+            text = file_path.read_text(
+                encoding="utf-8",
+                errors="ignore"
+            )
+        except OSError:
+            continue
+
         if "__main__" in text:
             return file_path
 
-    return next(folder.rglob("*.py"))
+    try:
+        return next(folder.rglob("*.py"))
+    except StopIteration:
+        return None
 
 
 def get_current_version():
@@ -137,14 +161,33 @@ def install_python_deps(venv_path):
     subprocess.run([str(pip), "install", "--upgrade", "pip"], check=False)
     subprocess.run([str(pip), "install"] + PYTHON_DEPS, check=True)
 
+def safe_run(command):
+    if shutil.which(command[0]) is None:
+        return False
+
+    try:
+        subprocess.run(
+            command,
+            check=False,
+            capture_output=True
+        )
+        return True
+    except Exception:
+        return False
 
 def create_launcher(install_dir, entry_file):
     launcher = install_dir / "xfce-theme-studio"
-    python_bin = install_dir / "venv/bin/python"
-    launcher.write_text(f"""#!/bin/bash
-cd \"{install_dir}\"
-\"{python_bin}\" \"{entry_file}\" "$@"
-""")
+
+    launcher.write_text(
+        f"""#!/bin/bash
+DIR="$(dirname "$(readlink -f "$0")")"
+
+cd "$DIR"
+exec "$DIR/venv/bin/python" "$DIR/{entry_file}" "$@"
+""",
+        encoding="utf-8"
+    )
+
     launcher.chmod(0o755)
 
 
@@ -157,7 +200,7 @@ Version=1.0
 Type=Application
 Name=Xfce Theme Studio
 Comment=Theme manager for XFCE
-Exec={install_dir / 'xfce-theme-studio'} %f
+Exec="{install_dir / 'xfce-theme-studio'}" "%f"
 Path={install_dir}
 Icon=xfce-theme-studio
 Terminal=false
@@ -166,6 +209,7 @@ MimeType={MIME_TYPE};
 """
     desktop_file.write_text(desktop_content, encoding="utf-8")
     desktop_file.chmod(0o644)
+    safe_run(["update-desktop-database", str(desktop_dir)])
 
 
 def register_xts_mime_type(install_dir=None):
@@ -203,49 +247,112 @@ def register_xts_mime_type(install_dir=None):
 
     mime_db_dir = XDG_DATA_HOME / "mime"
     mime_db_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["update-mime-database", str(mime_db_dir)], check=False, capture_output=True)
-    subprocess.run(["gtk-update-icon-cache", "-f", "-t", str(XDG_DATA_HOME / "icons" / "hicolor")], check=False, capture_output=True)
+    safe_run(["update-mime-database", str(mime_db_dir)])
+
+    safe_run([
+        "gtk-update-icon-cache",
+        "-f",
+        "-t",
+        str(XDG_DATA_HOME / "icons" / "hicolor")
+    ])
 
     create_desktop_entry(install_dir)
     desktop_file = Path.home() / ".local/share/applications" / DESKTOP_FILE_NAME
     if desktop_file.exists():
-        subprocess.run(["xdg-mime", "default", DESKTOP_FILE_NAME, MIME_TYPE], check=False, capture_output=True)
+        safe_run([
+            "xdg-mime",
+            "default",
+            DESKTOP_FILE_NAME,
+            MIME_TYPE
+        ])
 
     return mime_package_file.exists()
 
-
 def perform_update(release, install_dir=None):
     install_dir = Path(install_dir or get_update_target())
+
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
+
         archive_path = temp_path / "release.zip"
         extract_path = temp_path / "release"
 
         download(release["zip"], archive_path)
         extract(archive_path, extract_path)
+
         source_root = next(extract_path.iterdir())
 
-        if install_dir.exists():
-            shutil.rmtree(install_dir)
+        new_install = temp_path / "new_install"
+        new_install.mkdir(parents=True, exist_ok=True)
 
-        install_dir.mkdir(parents=True, exist_ok=True)
-        app_dir = install_dir / "app"
-        shutil.copytree(source_root, app_dir, dirs_exist_ok=True)
+        app_dir = new_install / "app"
 
-        clean_pycache(install_dir)
-        (install_dir / ".version").write_text(release["tag"], encoding="utf-8")
+        shutil.copytree(
+            source_root,
+            app_dir,
+            dirs_exist_ok=True
+        )
 
-        venv_path = install_dir / "venv"
+        clean_pycache(new_install)
+
+        (new_install / ".version").write_text(
+            release["tag"],
+            encoding="utf-8"
+        )
+
+        venv_path = new_install / "venv"
+
         create_venv(venv_path)
         install_python_deps(venv_path)
 
         entry_file = find_entry(app_dir)
-        create_launcher(install_dir, entry_file)
-        create_desktop_entry(install_dir)
-        register_xts_mime_type(install_dir)
+
+        if entry_file is None:
+            raise RuntimeError(
+                "No Python entry point found in application"
+            )
+
+        entry_file = entry_file.relative_to(new_install)
+        
+        launcher = new_install / "xfce-theme-studio"
+
+        backup_dir = install_dir.with_name(
+            install_dir.name + ".backup"
+        )
+
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+
+        try:
+            if install_dir.exists():
+                install_dir.rename(backup_dir)
+
+            shutil.move(
+                str(new_install),
+                str(install_dir)
+            )
+
+            create_launcher(install_dir, entry_file)
+
+            create_desktop_entry(install_dir)
+            register_xts_mime_type(install_dir)
+
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
+
+        except Exception:
+            if install_dir.exists():
+                shutil.rmtree(
+                    install_dir,
+                    ignore_errors=True
+                )
+
+            if backup_dir.exists():
+                backup_dir.rename(install_dir)
+
+            raise
 
     return install_dir
-
 
 def is_installation_complete(install_dir=None):
     install_dir = Path(install_dir or DEFAULT_INSTALL)
