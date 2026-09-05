@@ -21,10 +21,19 @@ Xfce Theme Studio is a Python application using PyGObject that allows users to e
 
 # Installation
 
-1. Download `installer.py` from the Releases section
-2. Open a terminal in the download directory (`cd 'directory'` )
-3. Run:  `python3 installer.py`
-4. click on **Install/Update**
+1. Download `installer.py` from the Releases section.
+2. Open a terminal in the download directory (`cd 'directory'`).
+3. Check the latest version and the current installation:
+  `python3 installer.py --check`
+4. Install or update from the terminal:
+  `python3 installer.py`
+
+The installer has no Tkinter dependency. It checks for the required Mint/Debian
+packages (`python3-gi`, GTK 3, Cairo, `python3-venv`, `python3-pip`, MIME and
+XDG tools), asks for administrator permission only when packages are missing,
+and installs Pillow and CairoSVG in a local virtual environment. Use
+`python3 installer.py --yes` for a non-interactive install, or
+`--no-system-deps` only when those system packages are already installed.
 
 ## Screenshots
 
@@ -67,12 +76,10 @@ An example structure is available in:
 
 ### Current version : 
 
-**v3.2.0**
-- Initial GTK theme customization support
-- Built-in installer
-- Theme editing improvements
-- Performance improvements
-- UI enhancements
+**v3.4.0**
+- Updated `installer.py` to check for required system packages and install missing ones
+- Begin xfwm4 theme customization support (in progress but not yet fully functional)
+- New mimetype icon to .xts file
 
 ### Next versions:
 
