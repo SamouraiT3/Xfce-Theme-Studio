@@ -6,6 +6,10 @@
 
 A simple graphical tool to create and customize icon themes for Xfce on Linux
 
+> **Project temporarily on hold**
+>
+> Development of Xfce Theme Studio is currently halted. The project may be resumed later, but no new features or fixes are planned for the time being.
+
 ## Description
 
 Xfce Theme Studio is a Python application using PyGObject that allows users to easily create and modify icon themes for the Xfce desktop environment. The intuitive interface facilitates icon management by categories (applications, places, devices, actions, status) and supports SVG and PNG formats.
@@ -76,24 +80,13 @@ An example structure is available in:
 
 ### Current version : 
 
-**v3.4.0**
-- Updated `installer.py` to check for required system packages and install missing ones
-- Begin xfwm4 theme customization support (in progress but not yet fully functional)
-- New mimetype icon to .xts file
+**v4.0.0**
+- xfwm4 theme support
 
 ### Next versions:
 
-**v3.x**
-- Bug fixes
-- Stability improvements
-- Performance improvements
-- GTK compatibility improvements
+**v4.x.x**
+- Bug fix
+- GTK options update
 
-**v3.x.x**
-- New customization elements and parameters
-- Expanded `theme_structure.py` support
-- Improved theme editing capabilities
-- Community contributions for `theme_structure.py`
-
-**v4.0**
-- XFWM4 theme customization support
+Project on hold

@@ -54,6 +54,21 @@ css_provider.load_from_data(b"""
         border-radius: 6px;
         background-color: alpha(@theme_selected_bg_color, 0.15);
     }
+
+    .xfwm4-asset-button,
+    .xfwm4-asset-button:hover,
+    .xfwm4-asset-button:active,
+    .xfwm4-asset-button:focus {
+        border: none;
+        background: transparent;
+        background-image: none;
+        box-shadow: none;
+    }
+
+    .xfwm4-asset-button.icon-cell-selected {
+        border: 2px solid @theme_selected_bg_color;
+        background-color: alpha(@theme_selected_bg_color, 0.15);
+    }
 """)
 Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
@@ -921,9 +936,7 @@ def create_same_icon_popup(current_icon_path, current_theme_name, category="apps
 
 # Action bar with window buttons
 toolbar = Gtk.HeaderBar()
-toolbar.set_show_close_button(True)
-toolbar.set_title("| Xfce Theme Studio -- Manage themes |")
-root.set_titlebar(toolbar)
+toolbar.set_show_close_button(False)
 
 btn_new = Gtk.Button(label="New theme")
 btn_new.connect("clicked", lambda *args: on_new_theme())
@@ -971,6 +984,7 @@ mode_button.connect("clicked", on_mode_switch)
 # Wrapper vertical : contient content_stack (horizontal) + bottom_bar
 root_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 root.add(root_vbox)
+root_vbox.pack_start(toolbar, False, False, 0)
 
 # Cadre principal (horizontal)
 main_frame = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -1083,13 +1097,20 @@ class IconTab:
         search_holder.pack_start(self.search_var, False, False, 4)
 
         # Bouton add (+) pour ajouter une icône personnalisée juste à coté de la barre de recherche
-        self.btn_add_icon = Gtk.Button(label="+")
+        self.btn_add_icon = Gtk.Button()
+
+        icon = Gtk.Image.new_from_icon_name("list-add", Gtk.IconSize.BUTTON)
+        self.btn_add_icon.set_image(icon)
+        self.btn_add_icon.set_always_show_image(True)
         self.btn_add_icon.set_tooltip_text("Add a custom icon for this category")
         self.btn_add_icon.connect("clicked", lambda *args: self.on_add_icon_click())
         search_holder.pack_start(self.btn_add_icon, False, False, 0)
 
         # Bouton remove (-) pour supprimer l'icône personnalisée sélectionnée si présent uniquement dans le dossier temporaire ou si elle est déjà présente dans le thème d'origine (permet de revenir à l'icône d'origine)
-        self.btn_remove_icon = Gtk.Button(label="-")
+        self.btn_remove_icon = Gtk.Button()
+        icon_remove = Gtk.Image.new_from_icon_name("list-remove", Gtk.IconSize.BUTTON)
+        self.btn_remove_icon.set_image(icon_remove)
+        self.btn_remove_icon.set_always_show_image(True)
         self.btn_remove_icon.set_tooltip_text("Remove the custom icon and revert to the original one")
         self.btn_remove_icon.connect("clicked", lambda *args: self.on_remove_icon_click())
         search_holder.pack_start(self.btn_remove_icon, False, False, 0)
@@ -1540,6 +1561,26 @@ mime_search_var = Gtk.Entry()
 mime_search_var.set_width_chars(30)
 mime_search_holder.pack_start(mime_search_var, False, False, 4)
 
+categories = ["All", "Images", "Audio", "Video", "Documents", "Archives", "Code"]
+
+current_category = "All"
+
+def set_category(btn, cat):
+    global current_category
+    current_category = cat
+    refresh_list(mime_list, mime_search_var, mime_list.get_selection(), mime_selection_handler_id, current_category)
+
+
+
+mime_category_notebook = Gtk.Notebook()
+mime_category_notebook.set_tab_pos(Gtk.PositionType.TOP)
+for cat in categories:
+    page = Gtk.Box()
+    mime_category_notebook.append_page(page, Gtk.Label(label=cat))
+    # on connecte le signal "switch-page" du notebook pour changer la catégorie courante et rafraîchir la liste
+mime_category_notebook.connect("switch-page", lambda nb, page, idx: set_category(None, categories[idx]))
+mime_left.pack_start(mime_category_notebook, False, False, 0)
+
 # Mimetype list
 mime_store = Gtk.ListStore(str)
 mime_list = Gtk.TreeView(model=mime_store)
@@ -1728,7 +1769,6 @@ mime_right_box.pack_start(btn_change_mime_icon, False, False, 0)
 
 mime_selection_handler_id = mime_list.get_selection().connect("changed", on_mime_select)
 mime_search_var.connect("changed", lambda *args: refresh_list(mime_list, mime_search_var, mime_list.get_selection(), mime_selection_handler_id))
-
 
 # Barre du bas
 bottom_bar = Gtk.ActionBar()

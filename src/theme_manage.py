@@ -1,6 +1,6 @@
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GdkPixbuf
 import os
 import subprocess
 import re
@@ -9,6 +9,7 @@ import shutil
 import configparser
 from pathlib import Path
 from theme_structure import THEME_STRUCTURE
+from PIL import Image
 from gtk_manage import (
     load_and_normalize_gtk_css,
     save_gtk_css,
@@ -1136,6 +1137,742 @@ def _build_css_tab_content(theme_path, css_filename, theme_structure=THEME_STRUC
     return scrolled
 
 
+def _read_xfwm4_themerc(theme_path):
+    xfwm_dir = Path(theme_path) / "xfwm4"
+    config_path = xfwm_dir / "themerc"
+    config = {}
+
+    if not config_path.exists():
+        return config
+
+    for raw_line in config_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        config[key.strip()] = value.strip()
+
+    return config
+
+
+def _write_xfwm4_themerc(theme_name, key, value):
+    theme_path = find_gtk_theme_path(theme_name)
+    if theme_path is None:
+        return False
+
+    temp_root = Path.home() / ".xfce-theme-studio" / "theme"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    temp_theme = temp_root / f"{theme_name}.temp"
+
+    if not temp_theme.exists():
+        shutil.copytree(theme_path, temp_theme, dirs_exist_ok=True)
+
+    xfwm_dir = temp_theme / "xfwm4"
+    themerc_path = xfwm_dir / "themerc"
+    themerc_path.parent.mkdir(parents=True, exist_ok=True)
+
+    config = _read_xfwm4_themerc(str(temp_theme))
+    config[key] = value
+
+    lines = []
+    for existing_key in sorted(config.keys()):
+        lines.append(f"{existing_key}={config[existing_key]}")
+
+    themerc_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
+def _xfwm4_widget_label(key):
+    labels = {
+        "active_text_color": "Active title text color",
+        "inactive_text_color": "Inactive title text color",
+        "active_text_shadow_color": "Active title shadow color",
+        "inactive_text_shadow_color": "Inactive title shadow color",
+        "title_shadow_active": "Active title shadow",
+        "title_shadow_inactive": "Inactive title shadow",
+        "full_width_title": "Full-width title bar",
+        "button_offset": "Button offset",
+        "button_spacing": "Button spacing",
+        "shadow_delta_x": "Shadow offset X",
+        "shadow_delta_y": "Shadow offset Y",
+        "shadow_delta_width": "Shadow width",
+        "shadow_delta_height": "Shadow height",
+        "shadow_opacity": "Shadow opacity",
+        "show_app_icon": "Show app icon",
+        "show_popup_shadow": "Show popup shadow",
+    }
+    return labels.get(key, key.replace("_", " ").capitalize())
+
+
+def _xfwm4_button_label(button_name, state):
+    friendly_names = {
+        "close": "Close button",
+        "maximize": "Maximize button",
+        "hide": "Hide button",
+        "shade": "Shade button",
+        "stick": "Stick button",
+        "menu": "Menu button",
+    }
+    state_labels = {
+        "active": "active",
+        "inactive": "inactive",
+        "prelight": "hover",
+        "pressed": "pressed",
+        "toggled-active": "toggled active",
+        "toggled-inactive": "toggled inactive",
+        "toggled-prelight": "toggled hover",
+        "toggled-pressed": "toggled pressed",
+    }
+    return f"{friendly_names.get(button_name, button_name.title())} — {state_labels.get(state, state.replace('-', ' '))}"
+
+
+def _create_xfwm4_value_widget(key, value):
+    if key.endswith("_color"):
+        button = Gtk.ColorButton()
+        try:
+            rgba = Gdk.RGBA()
+            if value:
+                rgba.parse(str(value))
+                button.set_rgba(rgba)
+        except Exception:
+            pass
+        return button
+
+    if key in ("title_shadow_active", "title_shadow_inactive", "full_width_title", "show_app_icon", "show_popup_shadow"):
+        switch = Gtk.Switch()
+        switch.set_active(str(value).lower() in ("true", "1", "yes", "on"))
+        return switch
+
+    if key in (
+        "button_offset", "button_spacing",
+        "shadow_delta_x", "shadow_delta_y", "shadow_delta_width", "shadow_delta_height",
+        "shadow_opacity", "title_vertical_offset_active", "title_vertical_offset_inactive"
+    ):
+        adj = Gtk.Adjustment(float(value) if value not in (None, "") else 0, -100, 100, 1, 10, 0)
+        spin = Gtk.SpinButton(adjustment=adj, digits=0)
+        return spin
+
+    if key in ("active_text_color", "inactive_text_color"):
+        button = Gtk.ColorButton()
+        try:
+            rgba = Gdk.RGBA()
+            if value:
+                rgba.parse(str(value))
+                button.set_rgba(rgba)
+        except Exception:
+            pass
+        return button
+
+    entry = Gtk.Entry()
+    entry.set_text(str(value or ""))
+    return entry
+
+
+def _get_xfwm4_widget_value(widget, key):
+    if isinstance(widget, Gtk.ColorButton):
+        rgba = widget.get_rgba()
+        return rgba.to_string()
+    if isinstance(widget, Gtk.Switch):
+        return "true" if widget.get_active() else "false"
+    if isinstance(widget, Gtk.SpinButton):
+        return str(int(widget.get_value()))
+    if isinstance(widget, Gtk.Entry):
+        return widget.get_text().strip()
+    return str(widget)
+
+
+def _xfwm4_image_pixels(image_path):
+    try:
+        pixbuf = GdkPixbuf.Pixbuf.new_from_file(str(image_path))
+        width = pixbuf.get_width()
+        height = pixbuf.get_height()
+        rowstride = pixbuf.get_rowstride()
+        channels = pixbuf.get_n_channels()
+        raw_pixels = pixbuf.get_pixels()
+        pixels = []
+
+        for y in range(height):
+            row_start = y * rowstride
+            for x in range(width):
+                offset = row_start + (x * channels)
+                red = raw_pixels[offset]
+                green = raw_pixels[offset + 1]
+                blue = raw_pixels[offset + 2]
+                alpha = raw_pixels[offset + 3] if channels == 4 else 255
+                pixels.append((red, green, blue, alpha))
+
+        return width, height, pixels
+    except Exception:
+        return None
+
+
+def _xfwm4_average_nontransparent_color(image_path):
+    image_data = _xfwm4_image_pixels(image_path)
+    if image_data is None:
+        return None
+
+    _, _, pixels = image_data
+    opaque_pixels = [pixel for pixel in pixels if pixel[3] > 8]
+    if not opaque_pixels:
+        return None
+
+    total_weight = sum(max(pixel[3], 1) for pixel in opaque_pixels)
+    return tuple(
+        int(sum(pixel[index] * max(pixel[3], 1) for pixel in opaque_pixels) / total_weight)
+        for index in range(3)
+    )
+
+
+def _xfwm4_strip_thickness(image_path, orientation):
+    image_data = _xfwm4_image_pixels(image_path)
+    if image_data is None:
+        return 0
+
+    width, height, pixels = image_data
+    if orientation == "vertical":
+        strip_values = range(width)
+        value_size = width
+        get_alpha = lambda value: max(
+            pixels[(row * width) + value][3] for row in range(height)
+        )
+    else:
+        strip_values = range(height)
+        value_size = height
+        get_alpha = lambda value: max(
+            pixels[(value * width) + column][3] for column in range(width)
+        )
+
+    occupied = [value for value in strip_values if get_alpha(value) > 8]
+    if not occupied:
+        return 0
+    return occupied[-1] - occupied[0] + 1
+
+
+def _xfwm4_extract_theme_materials(theme_path):
+    xfwm_dir = Path(theme_path) / "xfwm4"
+    if not xfwm_dir.exists():
+        return {
+            "background_color": None,
+            "border_color": None,
+            "border_width": 0,
+        }
+
+    active_files = sorted(xfwm_dir.glob("*.png"))
+    border_candidates = [
+        path for path in active_files
+        if path.name.endswith("-active.png")
+        and path.name.startswith(("left-", "right-", "top-", "bottom-"))
+    ]
+    background_candidates = [
+        path for path in active_files
+        if path.name.endswith("-active.png") and path.name.startswith("title-")
+    ]
+
+    if not border_candidates:
+        border_candidates = [
+            path for path in active_files
+            if path.name.startswith(("left-", "right-", "top-", "bottom-"))
+        ]
+    if not background_candidates:
+        background_candidates = [path for path in active_files if path.name.startswith("title-")]
+
+    border_color = None
+    background_color = None
+    border_width = 0
+
+    def average_colors(paths):
+        values = []
+        for path in paths:
+            color = _xfwm4_average_nontransparent_color(str(path))
+            if color is not None:
+                values.append(color)
+        if not values:
+            return None
+        total_r = sum(v[0] for v in values)
+        total_g = sum(v[1] for v in values)
+        total_b = sum(v[2] for v in values)
+        count = len(values)
+        return (int(total_r / count), int(total_g / count), int(total_b / count))
+
+    def count_colors(paths):
+        color_counts = {}
+        for path in paths:
+            try:
+                with Image.open(path) as source:
+                    pixels = source.convert("RGBA").getdata()
+            except Exception:
+                continue
+            for red, green, blue, alpha in pixels:
+                if alpha > 8:
+                    color = (red, green, blue)
+                    color_counts[color] = color_counts.get(color, 0) + 1
+        return color_counts
+
+    def dominant_color(paths):
+        counts = count_colors(paths)
+        if not counts:
+            return None
+        return max(counts, key=counts.get)
+
+    background_color = average_colors(background_candidates)
+    border_color = dominant_color(border_candidates)
+    if border_color and background_color:
+        border_counts = count_colors(border_candidates)
+        distinct_border_colors = {
+            color: count for color, count in border_counts.items()
+            if sum((color[index] - background_color[index]) ** 2 for index in range(3)) > 24 * 24
+        }
+        if distinct_border_colors:
+            border_color = max(distinct_border_colors, key=distinct_border_colors.get)
+    if border_color is None:
+        border_color = average_colors(border_candidates)
+
+    width_candidates = []
+    for path in border_candidates:
+        name = path.name
+        orientation = "vertical" if name.startswith(("left-", "right-")) else "horizontal"
+        thickness = _xfwm4_strip_thickness(path, orientation)
+        if thickness:
+            width_candidates.append(thickness)
+    if width_candidates:
+        border_width = max(set(width_candidates), key=width_candidates.count)
+
+    return {
+        "background_color": background_color,
+        "border_color": border_color,
+        "border_width": border_width,
+    }
+
+def _xfwm4_prepare_asset_pixbuf(image_path, materials, target_path):
+    try:
+        with Image.open(image_path) as source:
+            logo = source.convert("RGBA")
+        with Image.open(target_path) as source_template:
+            template = source_template.convert("RGBA")
+            width, height = template.size
+
+            background = materials.get("background_color")
+            border = materials.get("border_color")
+            background = tuple(background or (0, 0, 0))
+            border = tuple(border) if border else None
+            old_border = materials.get("source_border_color")
+            tolerance_squared = 48 * 48
+
+            canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            canvas_pixels = canvas.load()
+            template_pixels = template.load()
+
+            for y in range(height):
+                for x in range(width):
+                    red, green, blue, alpha = template_pixels[x, y]
+                    if alpha == 0:
+                        continue
+                    is_border = bool(
+                        old_border
+                        and (red - old_border[0]) ** 2
+                        + (green - old_border[1]) ** 2
+                        + (blue - old_border[2]) ** 2
+                        <= tolerance_squared
+                    )
+                    if is_border and border:
+                        canvas_pixels[x, y] = (*border, alpha)
+                    else:
+                        canvas_pixels[x, y] = (*background, alpha)
+
+            logo_size = max(1, min(16, width, height))
+            logo.thumbnail((logo_size, logo_size), Image.LANCZOS)
+            logo_x = (width - logo.width) // 2
+            logo_y = (height - logo.height) // 2
+            canvas.alpha_composite(logo, (logo_x, logo_y))
+
+            raw_data = canvas.tobytes()
+            return GdkPixbuf.Pixbuf.new_from_data(
+                raw_data,
+                GdkPixbuf.Colorspace.RGB,
+                True,
+                8,
+                width,
+                height,
+                width * 4,
+                None,
+            )
+    except Exception:
+        return None
+
+def _xfwm4_replace_theme_color(theme_path, old_color, new_color):
+    if not old_color or not new_color:
+        return False
+
+    theme_name = Path(theme_path).name
+    if theme_name.endswith(".temp"):
+        theme_name = theme_name[:-5]
+
+    temp_root = Path.home() / ".xfce-theme-studio" / "theme"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    temp_theme = temp_root / f"{theme_name}.temp"
+    if not temp_theme.exists():
+        shutil.copytree(theme_path, temp_theme, dirs_exist_ok=True)
+
+    xfwm_dir = temp_theme / "xfwm4"
+    if not xfwm_dir.exists():
+        return False
+
+    tolerance_squared = 32 * 32
+    changed = False
+    for image_path in xfwm_dir.glob("*.png"):
+        try:
+            with Image.open(image_path) as source:
+                image = source.convert("RGBA")
+                pixels = image.load()
+                image_changed = False
+
+                for y in range(image.height):
+                    for x in range(image.width):
+                        red, green, blue, alpha = pixels[x, y]
+                        if alpha == 0:
+                            continue
+                        distance_squared = (
+                            (red - old_color[0]) ** 2
+                            + (green - old_color[1]) ** 2
+                            + (blue - old_color[2]) ** 2
+                        )
+                        if distance_squared <= tolerance_squared:
+                            pixels[x, y] = (*new_color, alpha)
+                            image_changed = True
+
+                if image_changed:
+                    image.save(image_path, format="PNG")
+                    changed = True
+        except Exception:
+            continue
+
+    return changed
+
+
+def _xfwm4_replace_background_color(theme_path, old_color, new_color):
+    return _xfwm4_replace_theme_color(theme_path, old_color, new_color)
+
+
+def _xfwm4_replace_border_color(theme_path, old_color, new_color):
+    return _xfwm4_replace_theme_color(theme_path, old_color, new_color)
+
+
+def _xfwm4_color_to_hex(color):
+    if not color:
+        return "unknown"
+    return "#%02x%02x%02x" % tuple(color)
+
+
+def _build_xfwm4_tab_content(theme_path):
+    xfwm_dir = Path(theme_path) / "xfwm4"
+    root = Gtk.ScrolledWindow()
+    root.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+    root.set_hexpand(True)
+    root.set_vexpand(True)
+
+    if not xfwm_dir.exists():
+        msg = Gtk.Label(label="No xfwm4 folder found in this theme.")
+        msg.set_xalign(0)
+        root.add(msg)
+        return root
+
+    config = _read_xfwm4_themerc(theme_path)
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin=8)
+    content.set_hexpand(True)
+    content.set_vexpand(True)
+
+    settings_frame = Gtk.Frame(label="XFWM4 settings")
+    settings_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
+    settings_frame.add(settings_box)
+    content.pack_start(settings_frame, False, False, 0)
+
+    materials = _xfwm4_extract_theme_materials(theme_path)
+
+    if not config:
+        settings_box.pack_start(Gtk.Label(label="No themerc settings found in this theme."), False, False, 0)
+    else:
+        visible_keys = [
+            "active_text_color",
+            "inactive_text_color",
+            "active_text_shadow_color",
+            "inactive_text_shadow_color",
+            "title_shadow_active",
+            "title_shadow_inactive",
+            "full_width_title",
+            "button_offset",
+            "button_spacing",
+            "shadow_delta_x",
+            "shadow_delta_y",
+            "shadow_delta_width",
+            "shadow_delta_height",
+            "shadow_opacity",
+            "show_app_icon",
+            "show_popup_shadow",
+        ]
+
+        settings_grid = Gtk.Grid(row_spacing=6, column_spacing=10)
+        settings_grid.set_hexpand(True)
+        background_color_state = {
+            "value": materials.get("background_color"),
+        }
+        border_color_state = {
+            "value": materials.get("border_color"),
+        }
+
+        def refresh_preview_images():
+            theme_name = Path(theme_path).name
+            if theme_name.endswith(".temp"):
+                theme_name = theme_name[:-5]
+            temp_xfwm_dir = (
+                Path.home()
+                / ".xfce-theme-studio"
+                / "theme"
+                / f"{theme_name}.temp"
+                / "xfwm4"
+            )
+            for image_widget, image_name in preview_images:
+                updated_image = temp_xfwm_dir / image_name
+                if updated_image.exists():
+                    image_widget.set_from_file(str(updated_image))
+
+        settings_row = 0
+
+        window_settings = [
+            ("Background color", "background_color", "color"),
+            ("Border color", "border_color", "color"),
+        ]
+
+        for label_text, material_key, value_type in window_settings:
+            label = Gtk.Label(label=label_text)
+            label.set_xalign(0)
+            label.set_hexpand(True)
+
+            if value_type == "color":
+                color_button = Gtk.ColorButton()
+                color_value = materials.get(material_key)
+                if color_value:
+                    rgba = Gdk.RGBA()
+                    rgba.parse("#%02x%02x%02x" % tuple(color_value))
+                    color_button.set_rgba(rgba)
+                if material_key in ("background_color", "border_color"):
+                    def on_material_color_set(button, current_key=material_key):
+                        rgba = button.get_rgba()
+                        new_color = (
+                            round(rgba.red * 255),
+                            round(rgba.green * 255),
+                            round(rgba.blue * 255),
+                        )
+                        color_state = (
+                            background_color_state
+                            if current_key == "background_color"
+                            else border_color_state
+                        )
+                        old_color = color_state["value"]
+                        if _xfwm4_replace_theme_color(theme_path, old_color, new_color):
+                            color_state["value"] = new_color
+                            refresh_preview_images()
+
+                    color_button.connect("color-set", on_material_color_set)
+                widget = color_button
+            else:
+                adj = Gtk.Adjustment(float(materials.get(material_key, 0) or 0), 0, 100, 1, 10, 0)
+                widget = Gtk.SpinButton(adjustment=adj, digits=0)
+
+            settings_grid.attach(label, 0, settings_row, 1, 1)
+            settings_grid.attach(widget, 1, settings_row, 1, 1)
+            settings_row += 1
+
+        for key in visible_keys:
+            if key not in config:
+                continue
+
+            label = Gtk.Label(label=_xfwm4_widget_label(key))
+            label.set_xalign(0)
+            label.set_hexpand(True)
+            widget = _create_xfwm4_value_widget(key, config[key])
+            widget.set_hexpand(False)
+
+            def make_commit_callback(current_key, current_widget):
+                def on_change(_widget=None, *_args):
+                    value = _get_xfwm4_widget_value(current_widget, current_key)
+                    theme_name = Path(theme_path).name
+                    if theme_name.endswith(".temp"):
+                        theme_name = theme_name[:-5]
+                    _write_xfwm4_themerc(theme_name, current_key, value)
+                return on_change
+
+            if isinstance(widget, Gtk.ColorButton):
+                widget.connect("color-set", make_commit_callback(key, widget))
+            elif isinstance(widget, Gtk.Switch):
+                widget.connect("notify::active", make_commit_callback(key, widget))
+            elif isinstance(widget, Gtk.SpinButton):
+                widget.connect("value-changed", make_commit_callback(key, widget))
+            else:
+                widget.connect("changed", make_commit_callback(key, widget))
+
+            settings_grid.attach(label, 0, settings_row, 1, 1)
+            settings_grid.attach(widget, 1, settings_row, 1, 1)
+            settings_row += 1
+
+        if settings_row == 0:
+            settings_box.pack_start(Gtk.Label(label="The themerc is present, but no commonly used fields were detected."), False, False, 0)
+        else:
+            settings_box.pack_start(settings_grid, False, False, 0)
+
+    preview_frame = Gtk.Frame(label="Window control preview")
+    preview_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=8)
+    preview_frame.add(preview_box)
+
+    selection_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    selection_bar.set_hexpand(True)
+    selection_label = Gtk.Label(label="Selected item: none")
+    selection_label.set_xalign(0)
+    selection_bar.pack_start(selection_label, True, True, 0)
+
+    change_image_button = Gtk.Button(label="Change image")
+    selection_bar.pack_start(change_image_button, False, False, 0)
+    preview_box.pack_start(selection_bar, False, False, 0)
+
+    button_groups = [
+        ("close", ["active", "inactive", "prelight", "pressed"]),
+        ("maximize", ["active", "inactive", "prelight", "pressed", "toggled-active", "toggled-inactive", "toggled-prelight", "toggled-pressed"]),
+        ("hide", ["active", "inactive", "prelight", "pressed"]),
+        ("shade", ["active", "inactive", "prelight", "pressed", "toggled-active", "toggled-inactive", "toggled-prelight", "toggled-pressed"]),
+        ("stick", ["active", "inactive", "prelight", "pressed", "toggled-active", "toggled-inactive", "toggled-prelight", "toggled-pressed"]),
+        ("menu", ["active", "inactive", "prelight", "pressed"]),
+    ]
+
+    preview_grid = Gtk.Grid(row_spacing=8, column_spacing=10)
+    preview_grid.set_column_homogeneous(False)
+    preview_grid.set_row_homogeneous(False)
+    position = 0
+    preview_images = []
+    selected_asset = {"widget": None, "image_widget": None, "label": None, "filename": None}
+
+    def select_asset(asset_name, button_widget, image_widget=None, filename=None):
+        if selected_asset["widget"] and selected_asset["widget"] is not button_widget:
+            old_widget = selected_asset["widget"]
+            old_widget.set_state_flags(Gtk.StateFlags.NORMAL, True)
+            old_widget.get_style_context().remove_class("icon-cell-selected")
+
+        selected_asset["widget"] = button_widget
+        selected_asset["image_widget"] = image_widget
+        selected_asset["label"] = asset_name
+        selected_asset["filename"] = filename
+        button_widget.set_state_flags(Gtk.StateFlags.SELECTED, True)
+        button_widget.get_style_context().add_class("icon-cell-selected")
+        selection_label.set_text(f"Selected item: {asset_name}")
+        change_image_button.set_sensitive(True)
+
+    def on_change_image():
+        if selected_asset["widget"] is None or selected_asset["filename"] is None:
+            return
+
+        dialog = Gtk.FileChooserDialog(
+            title="Choose an image",
+            parent=None,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.add_button(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL)
+        dialog.add_button(Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
+        dialog.set_default_response(Gtk.ResponseType.OK)
+
+        filter_image = Gtk.FileFilter()
+        filter_image.set_name("Image files")
+        filter_image.add_mime_type("image/png")
+        filter_image.add_mime_type("image/jpeg")
+        filter_image.add_mime_type("image/svg+xml")
+        filter_image.add_pattern("*.png")
+        filter_image.add_pattern("*.jpg")
+        filter_image.add_pattern("*.jpeg")
+        filter_image.add_pattern("*.svg")
+        dialog.add_filter(filter_image)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            path = dialog.get_filename()
+            if path:
+                try:
+                    target_path = xfwm_dir / selected_asset["filename"]
+                    source_pixbuf = _xfwm4_prepare_asset_pixbuf(
+                        path,
+                        {
+                            "background_color": background_color_state["value"],
+                            "border_color": border_color_state["value"],
+                            "source_border_color": materials.get("border_color"),
+                        },
+                        str(target_path),
+                    )
+                    if source_pixbuf is None:
+                        raise ValueError("The selected image could not be processed")
+
+                    theme_name = Path(theme_path).name
+                    if theme_name.endswith(".temp"):
+                        theme_name = theme_name[:-5]
+                    temp_theme = Path.home() / ".xfce-theme-studio" / "theme" / f"{theme_name}.temp"
+                    if not temp_theme.exists():
+                        shutil.copytree(theme_path, temp_theme, dirs_exist_ok=True)
+                    destination = temp_theme / "xfwm4" / selected_asset["filename"]
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    source_pixbuf.savev(str(destination), "png", [], [])
+
+                    scaled = source_pixbuf.scale_simple(28, 28, GdkPixbuf.InterpType.BILINEAR)
+                    if selected_asset["image_widget"] is not None:
+                        selected_asset["image_widget"].set_from_pixbuf(scaled)
+                    refresh_preview_images()
+                    selection_label.set_text(f"Selected item: {selected_asset['label']} (image updated)")
+                except Exception:
+                    selection_label.set_text(f"Selected item: {selected_asset['label']} (image update failed)")
+        dialog.destroy()
+
+    change_image_button.connect("clicked", lambda *_: on_change_image())
+
+    for button_name, states in button_groups:
+        for state in states:
+            asset_name = f"{button_name}-{state}.png"
+            asset_path = xfwm_dir / asset_name
+            if not asset_path.exists():
+                continue
+
+            asset_button = Gtk.Button()
+            asset_button.set_relief(Gtk.ReliefStyle.NONE)
+            asset_button.set_focus_on_click(True)
+            asset_button.set_hexpand(False)
+            asset_button.set_vexpand(False)
+            asset_button.get_style_context().add_class("xfwm4-asset-button")
+            outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            img = Gtk.Image.new_from_file(str(asset_path))
+            img.set_pixel_size(28)
+            img.set_halign(Gtk.Align.CENTER)
+            label = Gtk.Label(label=_xfwm4_button_label(button_name, state))
+            label.set_line_wrap(True)
+            label.set_justify(Gtk.Justification.CENTER)
+            label.set_xalign(0.5)
+            preview_images.append((img, asset_name))
+            outer.pack_start(img, True, True, 0)
+            outer.pack_start(label, False, False, 0)
+            asset_button.add(outer)
+
+            asset_button.connect(
+                "clicked",
+                lambda _btn, name=_xfwm4_button_label(button_name, state), img_widget=img, filename=asset_name:
+                    select_asset(name, _btn, img_widget, filename),
+            )
+
+            col = position % 4
+            row = position // 4
+            preview_grid.attach(asset_button, col, row, 1, 1)
+            position += 1
+
+    if position == 0:
+        preview_grid.attach(Gtk.Label(label="No usable XFWM4 button assets were found."), 0, 0, 1, 1)
+
+    preview_box.pack_start(preview_grid, True, True, 0)
+    content.pack_start(preview_frame, True, True, 0)
+    root.add(content)
+    return root
+
+
 def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
     clear_container(container)
 
@@ -1156,13 +1893,9 @@ def build_gtk_theme_ui(container, theme_path, theme_structure=THEME_STRUCTURE):
     notebook.append_page(gtk_dark_css_content, tab2_label)
 
     # Tab 3: Window Manager (xfwm4)
-    xfwm4_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
-    xfwm4_label = Gtk.Label()
-    xfwm4_label.set_markup("<i>Window Manager icons grid coming soon...</i>")
-    xfwm4_label.set_alignment(0.5, 0.5)
-    xfwm4_box.pack_start(xfwm4_label, True, True, 0)
+    xfwm4_content = _build_xfwm4_tab_content(theme_path)
     tab3_label = Gtk.Label(label="Window Borders")
-    notebook.append_page(xfwm4_box, tab3_label)
+    notebook.append_page(xfwm4_content, tab3_label)
 
     container.show_all()
 
